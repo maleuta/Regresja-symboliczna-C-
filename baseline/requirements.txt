@@ -1,0 +1,2 @@
+# Tested with Python 3.12. Install in a project-local virtual environment.
+pysr==2.7.2
