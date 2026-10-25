@@ -98,9 +98,21 @@ podać osobny `--output`. To pilotaż środowiska, nie końcowe porównanie 36 u
 `report/report.tex` zawiera cel, przegląd literatury, metody, dane, sekcje wyników,
 dyskusji i wniosków. Opisuje aktualny stan bez przypisywania implementacji C++
 nieuzyskanych wyników wyszukiwania. Dokument można otworzyć w edytorze LaTeX Codex.
-Próba wbudowanej kompilacji jest obecnie zablokowana: kompilator nie ma w pamięci
-podręcznej pakietu TeX i nie może pobrać `default_bundle_v33.tar.index.gz` z
-`relay.fullyjustified.net`. Kompilacja źródła nie została jeszcze potwierdzona.
+Do kompilacji poza edytorem dostępny jest lokalny
+[Tectonic 0.17.0](https://github.com/tectonic-typesetting/tectonic/releases/tag/tectonic%400.17.0)
+w `.tools/tectonic/tectonic`. Plik binarny pochodzi z oficjalnego wydania
+`x86_64-unknown-linux-musl`; jego SHA-256 zweryfikowano względem metadanych wydania.
+
+```sh
+mkdir -p artifacts/report
+XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted --keep-logs -o artifacts/report report/report.tex
+```
+
+Wynik to `artifacts/report/report.pdf`; log kompilacji znajduje się w tym samym
+katalogu. Przy pierwszym uruchomieniu pobierane są pakiety TeX, przechowywane
+w `.cache/`. Kompilator, pakiety i wygenerowane pliki nie są zapisywane w Git.
+Kompilację raportu i poprawność polskich znaków potwierdzono; wynik ma 3 strony.
+Po pobraniu pakietów działa również kompilacja offline z opcją `--only-cached`.
 
 Dokumentacja źródłowa: [PySR API](https://pysr.ai/v2.6.0/api),
 [PySR / SymbolicRegression.jl](https://github.com/astroautomata/PySR).
