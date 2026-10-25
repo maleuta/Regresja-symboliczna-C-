@@ -1,0 +1,11 @@
+/build*/
+/.venv/
+/.tools/
+/.cache/
+/artifacts/
+__pycache__/
+*.pyc
+/report/*.aux
+/report/*.log
+/report/*.out
+/report/*.pdf
