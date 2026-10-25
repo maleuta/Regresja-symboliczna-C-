@@ -1,0 +1,112 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[polish]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,booktabs,hyperref}
+\title{Regresja symboliczna w C++23\\Szkic raportu projektu}
+\author{Studio projektowe 1}
+\date{25 października 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Projekt dotyczy implementacji regresji symbolicznej w C++23 oraz porównania
+jej z PySR. Niniejszy dokument jest szkicem raportu: opisuje cel, podstawy
+metody i zbiory danych. Obecny etap obejmuje przygotowanie środowiska,
+generator danych, reprezentację wyrażeń i obliczanie ich wartości.
+Wyszukiwanie ewolucyjne w C++ oraz końcowe porównanie nie są jeszcze wykonane.
+\end{abstract}
+
+\section{Cel i zakres}
+Celem projektu jest wyszukiwanie interpretowalnych wzorów na podstawie danych
+tabelarycznych. Planowane rozwiązanie obejmuje jedną populację ewolucyjną,
+podstawową optymalizację stałych, konfigurowalne operatory i funkcję straty,
+ograniczenia złożoności oraz proste szablony wyrażeń. Pytania badawcze dotyczą
+odtwarzania zależności fizycznych w obecności szumu oraz kompromisu między
+błędem testowym, złożonością i czasem działania względem PySR.
+
+\section{Przegląd istniejących rozwiązań}
+Regresja symboliczna poszukuje zarówno struktury modelu, jak i jego parametrów.
+PySR wykorzystuje silnik SymbolicRegression.jl oraz wyszukiwanie ewolucyjne
+łączone z upraszczaniem wyrażeń i optymalizacją stałych~\cite{cranmer}.
+Oficjalne API udostępnia wybór operatorów, funkcji straty, limitów złożoności
+i parametrów wyszukiwania~\cite{pysr}. Porównanie będzie dotyczyć całych
+implementacji, a nie samej różnicy między językami C++ i Python.
+
+\section{Metoda i bieżąca implementacja}
+Wyrażenie jest drzewem z węzłami stałej, nazwanej zmiennej oraz operatora
+unarnego lub binarnego. Obliczanie odbywa się rekurencyjnie z arytmetyką
+\texttt{double}. API pozwala rejestrować własne operatory i funkcje straty;
+dostępne funkcje straty to między innymi MSE i MAE. Niepoprawne dane,
+nieznane zmienne lub operatory, dzielenie przez zero i wyniki NaN/Inf są
+zgłaszane jako błędy. Testy obejmują wartości wzorcowe, zapis i odczyt CSV,
+przypadki graniczne oraz powtarzalność generowania danych.
+
+Na kolejnych etapach zostaną dodane inicjalizacja populacji, selekcja
+turniejowa, mutacje, krzyżowanie i prosta optymalizacja stałych.
+
+\section{Dane i metodologia oceny}
+Wykorzystane zostaną trzy syntetyczne zależności fizyczne:
+\begin{align*}
+ F(x) &= 2.5x + 0.75, & x &\in [-2,2]\ \mathrm{m},\\
+ h(t,v_0) &= v_0t - 4.905t^2, & t &\in [0,2]\ \mathrm{s},\quad v_0\in[12,20]\ \mathrm{m/s},\\
+ x(t) &= 1.5\cos(2t+0.3), & t &\in [0,4]\ \mathrm{s}.
+\end{align*}
+Jednostkami wyjścia są odpowiednio N, m i m. Dane opisują idealizowane modele,
+a nie rzeczywiste pomiary. Każdy problem ma 256 punktów treningowych,
+128 walidacyjnych i 256 testowych, generowanych z niezależnymi ziarnami.
+Wariant zaszumiony zachowuje te same wejścia i dodaje do celu szum
+gaussowski o odchyleniu $0.01\,\mathrm{std}(y_{\mathrm{train,clean}})$.
+Zapis CSV i manifest zawierają dane oraz parametry generowania.
+
+Plan końcowy przewiduje 36 uruchomień: trzy zależności, dwa warianty danych,
+trzy ziarna wyszukiwania i dwa systemy, z budżetem 90 sekund na wyszukiwanie.
+Operatory, precyzja, limity złożoności, dane i zasoby CPU będą jednakowe.
+Koszt startu i JIT zostanie oddzielony od wyszukiwania. Wzór zostanie wybrany
+na danych walidacyjnych, a oceniony na testowych; raport obejmie błąd,
+złożoność, czas i nieudane uruchomienia.
+
+\section{Wyniki}
+Na obecnym etapie rezultatem jest działająca reprezentacja i ewaluacja
+zadanych wyrażeń oraz generator danych. Przykład sprężyny służy sprawdzeniu
+obliczeń i API własnych funkcji; nie jest wynikiem automatycznego odkrycia wzoru.
+Próbne uruchomienia PySR służą weryfikacji środowiska i eksportu wyniku,
+nie zastępują końcowej serii porównawczej. Użyto PySR 2.7.2,
+SymbolicRegression.jl 2.7.2, Julii 1.13.2 i Pythona 3.12.15, jednej populacji,
+20 iteracji i ziarna 0. Wyboru wzoru dokonano według błędu walidacyjnego.
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Próba & Złożoność & Testowe MSE \\
+\midrule
+Sprężyna, bez szumu & 5 & $2.82\cdot 10^{-29}$ \\
+Ruch pionowy, bez szumu & 17 & $1.05\cdot 10^{-2}$ \\
+Oscylator, z szumem & 18 & $1.09\cdot 10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Próba sprężyny zwróciła wzór bliski $2.5x+0.75$. Pojedyncze uruchomienia
+nie stanowią oceny rozrzutu wyników ani dowodu przewagi nad implementacją C++.
+Wyniki końcowej serii zostaną uzupełnione po implementacji wyszukiwania w C++.
+
+\section{Dyskusja i ograniczenia}
+Test poprawnego obliczania znanej formuły nie dowodzi skuteczności jej
+wyszukiwania. Ograniczony zestaw danych i liczba powtórzeń nie pozwalają
+na ogólne wnioski o przewadze jednego rozwiązania. Porównanie wymaga
+zapisania wersji zależności, rzeczywistych danych i ustawień uruchomienia.
+
+\section{Wnioski i dalsze prace}
+Przygotowana baza będzie rozwijana o algorytm ewolucyjny i ograniczenia
+wyrażeń. Wszystkie funkcje obowiązkowe są planowane do 30 listopada,
+porównanie do 7 grudnia, a pełny pakiet i raport do 14 grudnia 2026 roku.
+
+\begin{thebibliography}{9}
+\bibitem{cranmer} M. Cranmer, \emph{Interpretable Machine Learning for Science
+with PySR and SymbolicRegression.jl}, 2023.
+\url{https://arxiv.org/abs/2305.01582}.
+\bibitem{pysr} PySR, \emph{API Reference}.
+\url{https://pysr.ai/v2.6.0/api}.
+\end{thebibliography}
+\end{document}
