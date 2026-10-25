@@ -1,0 +1,29 @@
+cmake_minimum_required(VERSION 3.20)
+project(symbolic_regression VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(SR_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    if(SR_SANITIZERS)
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address,undefined)
+    endif()
+endif()
+
+add_library(sr src/dataset.cpp src/benchmarks.cpp)
+target_include_directories(sr PUBLIC include)
+
+add_executable(sr_generate apps/generate_data.cpp)
+target_link_libraries(sr_generate PRIVATE sr)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(sr_tests tests/test_sr.cpp)
+    target_link_libraries(sr_tests PRIVATE sr)
+    add_test(NAME sr_tests COMMAND sr_tests)
+    add_test(NAME generate_data COMMAND sr_generate "${CMAKE_CURRENT_BINARY_DIR}/test-data")
+endif()
