@@ -1,4 +1,5 @@
 #include "sr/benchmarks.hpp"
+#include "sr/expression.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -75,13 +76,81 @@ void generation_tests() {
     near(sr::target_standard_deviation(simple), 1);
 }
 
+void expression_tests() {
+    using E = sr::Expression;
+    sr::FunctionRegistry functions;
+    const std::vector<std::string> names{"x"};
+    const auto formula = E::binary("+", E::binary("*", E::constant(2.5), E::variable("x")), E::constant(0.75));
+    near(sr::evaluate(formula, functions, names, std::vector<double>{2}), 5.75);
+    near(sr::evaluate(E::constant(-3), functions, {}, {}), -3);
+    check(formula.size() == 5 && formula.depth() == 3, "Tree size/depth");
+    check(formula.to_string() == "+(*(2.5, x), 0.75)", "Unambiguous expression display");
+    const auto copy = formula;
+    check(copy.to_string() == formula.to_string(), "Tree copy");
+    const auto square = E::unary("square", E::variable("x"));
+    near(sr::evaluate(square, functions, names, std::vector<double>{-3}), 9);
+    near(sr::evaluate(E::unary("sin", E::constant(0)), functions, {}, {}), 0);
+    near(sr::evaluate(E::binary("/", E::constant(3), E::constant(2)), functions, {}, {}), 1.5);
+    functions.add_unary("cube", [](double x) { return x * x * x; });
+    functions.add_binary("offset", [](double a, double b) { return a + 2 * b; });
+    const auto custom = E::binary("offset", E::unary("cube", E::variable("x")), E::constant(4));
+    near(sr::evaluate(custom, functions, names, std::vector<double>{2}), 16);
+    const auto data = sr::generate_data(sr::physical_problems()[0], 32, 42);
+    const auto predictions = sr::predict(formula, functions, data);
+    near(sr::mean_loss(predictions, data.targets, functions.loss("mse")), 0);
+    const auto projectile = E::binary("-", E::binary("*", E::variable("v0"), E::variable("t")),
+                                    E::binary("*", E::constant(4.905), E::unary("square", E::variable("t"))));
+    const std::vector<std::string> reversed_names{"v0", "t"};
+    near(sr::evaluate(projectile, functions, reversed_names, std::vector<double>{15, 1}), 10.095);
+    const auto oscillator = E::binary("*", E::constant(1.5), E::unary("cos", E::binary("+",
+        E::binary("*", E::constant(2), E::variable("t")), E::constant(0.3))));
+    const auto oscillation_data = sr::generate_data(sr::physical_problems()[2], 32, 43);
+    near(sr::mean_loss(sr::predict(oscillator, functions, oscillation_data), oscillation_data.targets,
+                       functions.loss("mse")), 0);
+    throws([&] { functions.add_unary("cube", [](double x) { return x; }); });
+    throws([&] { functions.add_unary("", [](double x) { return x; }); });
+    throws([&] { functions.add_binary("empty", {}); });
+    throws([&] { functions.loss("missing"); });
+    throws([] { E::variable(""); });
+    throws([&] { sr::evaluate(E::variable("unknown"), functions, names, std::vector<double>{1}); });
+    throws([&] { sr::evaluate(formula, functions, names, {}); });
+    throws([&] { sr::evaluate(formula, functions, std::vector<std::string>{"x", "x"}, std::vector<double>{1, 2}); });
+    throws([&] { sr::evaluate(E::unary("unknown", E::constant(1)), functions, {}, {}); });
+    throws([&] { sr::evaluate(E::unary("+", E::constant(1)), functions, {}, {}); });
+    throws<std::domain_error>([] { E::constant(std::numeric_limits<double>::infinity()); });
+    throws<std::domain_error>([&] { sr::evaluate(formula, functions, names, std::vector<double>{NAN}); });
+    throws<std::domain_error>([&] { sr::evaluate(E::binary("/", E::constant(1), E::constant(0)), functions, {}, {}); });
+    throws<std::domain_error>([&] { sr::evaluate(E::unary("square", E::constant(1e308)), functions, {}, {}); });
+    functions.add_unary("sqrt", [](double x) { return std::sqrt(x); });
+    throws<std::domain_error>([&] { sr::evaluate(E::unary("sqrt", E::constant(-1)), functions, {}, {}); });
+}
+
+void loss_tests() {
+    sr::FunctionRegistry functions;
+    const std::vector<double> predictions{1, 5}, targets{2, 3};
+    near(sr::mean_loss(predictions, targets, functions.loss("mse")), 2.5);
+    near(sr::mean_loss(predictions, targets, functions.loss("mae")), 1.5);
+    functions.add_loss("scaled_absolute", [](double p, double t) { return 2 * std::abs(p - t); });
+    near(sr::mean_loss(predictions, targets, functions.loss("scaled_absolute")), 3);
+    throws([&] { functions.add_loss("mse", [](double, double) { return 0; }); });
+    throws([&] { sr::mean_loss({}, {}, functions.loss("mse")); });
+    throws([&] { sr::mean_loss(predictions, std::vector<double>{1}, functions.loss("mse")); });
+    throws([&] { sr::mean_loss(predictions, targets, {}); });
+    throws<std::domain_error>([&] { sr::mean_loss(predictions, targets, [](double, double) { return -1; }); });
+    throws<std::domain_error>([&] { sr::mean_loss(predictions, targets, [](double, double) { return NAN; }); });
+    throws<std::domain_error>([&] { sr::mean_loss(std::vector<double>{NAN}, std::vector<double>{1}, functions.loss("mse")); });
+    throws<std::domain_error>([&] { sr::mean_loss(std::vector<double>{1e308}, std::vector<double>{0}, functions.loss("mse")); });
+}
+
 } // namespace
 
 int main() {
     try {
         csv_tests();
         generation_tests();
-        std::cout << "CSV and physical data tests passed\n";
+        expression_tests();
+        loss_tests();
+        std::cout << "CSV, physical data, expression and loss tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "Test failed: " << error.what() << '\n';
         return 1;
