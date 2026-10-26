@@ -59,6 +59,31 @@ double evaluate_tree(const Expression& expression, const FunctionRegistry& funct
     throw std::logic_error("Unknown expression kind");
 }
 
+void append_tree(std::ostream& output, const Expression& expression, const std::string& prefix,
+                 bool root, bool last) {
+    if (!root) output << prefix << (last ? "`-- " : "|-- ");
+    switch (expression.kind()) {
+    case Expression::Kind::constant:
+        output << "constant: " << expression.to_string();
+        break;
+    case Expression::Kind::variable:
+        output << "variable: " << expression.name();
+        break;
+    case Expression::Kind::unary:
+        output << "unary: " << expression.name();
+        break;
+    case Expression::Kind::binary:
+        output << "binary: " << expression.name();
+        break;
+    }
+    output << '\n';
+    const auto child_prefix = root ? std::string{} : prefix + (last ? "    " : "|   ");
+    const auto& children = expression.children();
+    for (std::size_t i = 0; i < children.size(); ++i) {
+        append_tree(output, children[i], child_prefix, false, i + 1 == children.size());
+    }
+}
+
 } // namespace
 
 FunctionRegistry::FunctionRegistry() {
@@ -129,6 +154,12 @@ std::string Expression::to_string() const {
     if (kind_ == Kind::variable) return name_;
     if (kind_ == Kind::unary) return name_ + "(" + children_[0].to_string() + ")";
     return name_ + "(" + children_[0].to_string() + ", " + children_[1].to_string() + ")";
+}
+
+std::string Expression::to_tree() const {
+    std::ostringstream output;
+    append_tree(output, *this, {}, true, true);
+    return output.str();
 }
 
 double evaluate(const Expression& expression, const FunctionRegistry& functions,

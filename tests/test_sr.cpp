@@ -85,6 +85,24 @@ void expression_tests() {
     near(sr::evaluate(E::constant(-3), functions, {}, {}), -3);
     check(formula.size() == 5 && formula.depth() == 3, "Tree size/depth");
     check(formula.to_string() == "+(*(2.5, x), 0.75)", "Unambiguous expression display");
+    check(formula.to_tree() ==
+          "binary: +\n"
+          "|-- binary: *\n"
+          "|   |-- constant: 2.5\n"
+          "|   `-- variable: x\n"
+          "`-- constant: 0.75\n", "Tree branches preserve left/right child order");
+    check(E::constant(-3).to_tree() == "constant: -3\n", "Standalone constant tree");
+    check(E::variable("velocity").to_tree() == "variable: velocity\n", "Standalone named variable tree");
+    const auto right_branch = E::binary("/", E::variable("x"),
+        E::unary("unregistered", E::binary("-", E::constant(1), E::constant(0))));
+    check(right_branch.to_tree() ==
+          "binary: /\n"
+          "|-- variable: x\n"
+          "`-- unary: unregistered\n"
+          "    `-- binary: -\n"
+          "        |-- constant: 1\n"
+          "        `-- constant: 0\n", "Nested last branch prints without evaluating or looking up functions");
+    near(sr::evaluate(formula, functions, names, std::vector<double>{2}), 5.75);
     const auto copy = formula;
     check(copy.to_string() == formula.to_string(), "Tree copy");
     const auto square = E::unary("square", E::variable("x"));

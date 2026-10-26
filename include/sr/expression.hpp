@@ -46,6 +46,8 @@ public:
     std::size_t size() const;
     std::size_t depth() const;
     std::string to_string() const;
+    // Multiline ASCII tree for terminal output and debugging; does not evaluate functions.
+    std::string to_tree() const;
 
 private:
     Expression(Kind kind, double value, std::string name, std::vector<Expression> children);
