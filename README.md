@@ -12,7 +12,7 @@ optymalizacja stałych i szablony pozostają kolejnymi etapami planu.
 | `include/sr/expression.hpp`, `src/expression.cpp` | Drzewa wyrażeń, rejestr operatorów/loss, obliczanie, predykcja i strata |
 | `include/sr/benchmarks.hpp`, `src/benchmarks.cpp` | Definicje trzech zależności fizycznych, próbkowanie i szum |
 | `apps/generate_data.cpp` | Generator CSV i manifestu; parametry w `data/SPEC.md` |
-| `apps/example.cpp` | Przykład własnych operatorów unarnych/binarnych i funkcji straty |
+| `apps/example.cpp` | Obliczanie wzoru sprężyny, wydruk drzewa oraz błędy MSE i MAE |
 | `tests/test_sr.cpp` | Wartości wzorcowe, dziedziny, błędne CSV i powtarzalność danych |
 | `baseline/` | Wyłącznie adapter do uruchamiania PySR i przypięte zależności Pythona |
 | `report/report.tex` | Samodzielny szkic artykułu LaTeX |
@@ -65,7 +65,8 @@ potrzebny do tego etapu. `to_string` służy do wyświetlania, nie serializacji 
 
 `to_tree()` zwraca tekstowe drzewo z typami węzłów i gałęziami ASCII. Nie wymaga
 rejestru funkcji ani danych i nie wykonuje obliczeń. Przykład `build/sr_example`
-pokazuje zapis standardowymi operatorami oraz wersję z własnymi funkcjami.
+pokazuje wzór `2.5 * x + 0.75` zbudowany z operatorów `*` i `+`, jego drzewo
+oraz błędy MSE i MAE.
 Drzewo można wypisać w dowolnym miejscu, również później podczas wyszukiwania:
 
 ```cpp
@@ -84,8 +85,7 @@ binary: +
 
 `unary` oznacza funkcję z jednym argumentem, `binary` z dwoma, `constant` stałą,
 a `variable` zmienną. Dzieci funkcji binarnej są wyświetlane w kolejności lewy,
-prawy argument. Własne funkcje są pokazywane jako pojedyncze węzły ze swoją nazwą;
-ich implementacja w lambdzie nie jest rozwijana do osobnego drzewa. Metoda
+prawy argument. Metoda
 wyświetla już istniejący `Expression`; wprowadzanie wzoru jako tekstu wymagałoby parsera.
 
 Standardowe operatory: `+`, `-`, `*`, `/`, `sin`, `cos`, `square`; straty: `mse`,
