@@ -18,8 +18,13 @@ int main(int argc, char** argv) {
         });
         using E = sr::Expression;
         const auto formula = E::unary("bias", E::binary("scale", E::constant(2.5), E::variable("x")));
+        const auto standard_formula = E::binary("+",
+            E::binary("*", E::constant(2.5), E::variable("x")), E::constant(0.75));
         const auto predictions = sr::predict(formula, functions, dataset);
-        std::cout << "Formula (registered functions): " << formula.to_string()
+        std::cout << "Formula (standard operators): " << standard_formula.to_string()
+                  << "\nTree:\n" << standard_formula.to_tree()
+                  << "\nFormula (registered functions): " << formula.to_string()
+                  << "\nTree:\n" << formula.to_tree()
                   << "\nNodes: " << formula.size() << ", depth: " << formula.depth()
                   << "\nRows: " << predictions.size()
                   << "\nMSE: " << sr::mean_loss(predictions, dataset.targets, functions.loss("mse"))

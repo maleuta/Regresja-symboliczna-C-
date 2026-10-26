@@ -63,6 +63,31 @@ i oblicza cały `Dataset`; `mean_loss` uśrednia nieujemną stratę punktową.
 Kod użycia znajduje się w `apps/example.cpp`; parser tekstowych wzorów nie jest
 potrzebny do tego etapu. `to_string` służy do wyświetlania, nie serializacji modelu.
 
+`to_tree()` zwraca tekstowe drzewo z typami węzłów i gałęziami ASCII. Nie wymaga
+rejestru funkcji ani danych i nie wykonuje obliczeń. Przykład `build/sr_example`
+pokazuje zapis standardowymi operatorami oraz wersję z własnymi funkcjami.
+Drzewo można wypisać w dowolnym miejscu, również później podczas wyszukiwania:
+
+```cpp
+std::cout << formula.to_tree();
+```
+
+Dla drzewa odpowiadającego `2.5 * x + 0.75` wynik wygląda tak:
+
+```text
+binary: +
+|-- binary: *
+|   |-- constant: 2.5
+|   `-- variable: x
+`-- constant: 0.75
+```
+
+`unary` oznacza funkcję z jednym argumentem, `binary` z dwoma, `constant` stałą,
+a `variable` zmienną. Dzieci funkcji binarnej są wyświetlane w kolejności lewy,
+prawy argument. Własne funkcje są pokazywane jako pojedyncze węzły ze swoją nazwą;
+ich implementacja w lambdzie nie jest rozwijana do osobnego drzewa. Metoda
+wyświetla już istniejący `Expression`; wprowadzanie wzoru jako tekstu wymagałoby parsera.
+
 Standardowe operatory: `+`, `-`, `*`, `/`, `sin`, `cos`, `square`; straty: `mse`,
 `mae`. Puste i powtórzone rejestracje są odrzucane. Niepoprawne dane, nazwy lub
 rozmiary powodują `std::invalid_argument`; niepoprawna arytmetyka, przepełnienie
