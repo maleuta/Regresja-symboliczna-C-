@@ -1,5 +1,6 @@
 #include "sr/benchmarks.hpp"
 #include "sr/expression.hpp"
+#include "test_util.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -9,21 +10,9 @@
 
 namespace {
 
-void check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-void near(double actual, double expected, double tolerance = 1e-12) {
-    check(std::isfinite(actual) && std::abs(actual - expected) <= tolerance,
-          "Expected " + std::to_string(expected) + ", got " + std::to_string(actual));
-}
-
-template<class Exception = std::invalid_argument, class Function>
-void throws(Function function) {
-    try { function(); }
-    catch (const Exception&) { return; }
-    throw std::runtime_error("Expected exception was not thrown");
-}
+using test::check;
+using test::near;
+using test::throws;
 
 void csv_tests() {
     std::istringstream source(" y , t , v0\r\n1, 0.5, 12\r\n2,1,15\r\n");
