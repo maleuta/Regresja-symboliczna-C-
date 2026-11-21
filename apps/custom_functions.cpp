@@ -1,7 +1,9 @@
 #include "sr/expression.hpp"
+#include "sr/search.hpp"
 
 #include <cmath>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -48,6 +50,28 @@ int main(int argc, char** argv) {
                   << "\nMSE:   " << sr::mean_loss(predictions, dataset.targets, functions.loss("mse"))
                   << "\nMAE:   " << sr::mean_loss(predictions, dataset.targets, functions.loss("mae"))
                   << "\nHuber: " << sr::mean_loss(predictions, dataset.targets, functions.loss("huber")) << '\n';
+
+        // The search refers to operators and losses by name only: the custom hypot and Huber
+        // loss registered above are used without any change to the search loop.
+        sr::Dataset forces{{"Fx", "Fy"}, {}, {}};
+        sr::Random random(2026);
+        std::uniform_real_distribution<double> component(-3, 3);
+        for (int i = 0; i < 128; ++i) {
+            const double fx = component(random), fy = component(random);
+            forces.inputs.push_back({fx, fy});
+            forces.targets.push_back(std::hypot(fx, fy));  // resultant of perpendicular forces
+        }
+        sr::SearchOptions options;
+        options.binary_operators = {"+", "-", "*", "hypot"};
+        options.unary_operators = {"exp"};
+        options.loss = "huber";
+        options.iterations = 15;
+        const auto result = sr::fit(forces, options, functions);
+        std::cout << "\nSearch for |F| from (Fx, Fy) with binary [+, -, *, hypot], unary [exp], loss huber\n";
+        sr::write_hall_of_fame_csv(std::cout, result);
+        std::cout << "Selected: " << result.best.expression.to_string() << " (Huber loss "
+                  << result.best.train_loss << ")\nUndefined candidates rejected: "
+                  << result.statistics.failed_evaluations << '\n';
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
