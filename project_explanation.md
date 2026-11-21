@@ -7,7 +7,7 @@ complements the user-facing [README.md](README.md) (Polish), the schedule in
 [report/report.tex](report/report.tex). Code fragments are quoted from the sources;
 when they differ, the sources win.
 
-Last updated: 21.11.2026 (state for the 23.11 milestone).
+Last updated: 21.11.2026 (state for the 23.11 milestone and presentation).
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 21.11.2026 (state for the 23.11 milestone).
 | 26.10 | Expression trees, CSV, evaluation, operator/loss registry | done | `expression.*`, `dataset.*` |
 | 09.11 | Evolutionary search: initialization, tournament, mutation, crossover, configuration, stopping rules, saved best formula | done (implemented for 23.11) | `search.*`, `apps/search.cpp` |
 | 16.11 | MVP: coordinate-search constant optimization, best candidate per complexity, fit + predict, reproducible test | done (implemented for 23.11) | `optimize_constants`, hall of fame, `sr_search` |
-| 23.11 | Custom operators and loss without changing the search loop; size, depth, argument and exponent limits; boundary tests; search produces only admissible candidates | done | `constraints.*`, `Variation`, `apps/custom_functions.cpp`, `apps/constraints.cpp`, `tests/test_search.cpp` |
+| 23.11 | Custom operators and loss without changing the search loop; size, depth, argument and exponent limits; boundary tests; search produces only admissible candidates; presentation with visualizer | done | `constraints.*`, `Variation`, `apps/custom_functions.cpp`, `apps/constraints.cpp`, `tests/test_search.cpp` |
 | 30.11 | Fixed template with one learned subtree; explicit variable lists; benchmarking tool; freeze | next | (`SearchOptions::variables` already exists) |
 
 The 09.11 and 16.11 milestones were not implemented on time. The 23.11
@@ -46,6 +46,7 @@ tests/test_sr.cpp           sr_tests              CSV, data, expression, custom 
 tests/test_search.cpp       sr_search_tests       editing, pow, constraints, variation, optimizer, search
 tests/test_util.hpp                               check / near / throws helpers
 baseline/run_pysr.py                              PySR pilot (Python is used only for PySR)
+presentation/                                     slides, visualizer, traces, speaker script (section 10)
 ```
 
 Dependencies only go downward: `search` → `constraints` → `expression` → `dataset`.
@@ -470,6 +471,32 @@ the same caveat as in `data/SPEC.md`.) `search_tests` runs the search twice and
 compares the hall of fame exactly. Rerunning the 18-run grid of section 9 gave
 identical results.
 
+### 6.9 Observing a run (`SearchObserver`)
+
+Two optional callbacks in `SearchOptions::observer` make a run visible without
+touching the algorithm:
+
+```cpp
+struct SearchObserver {
+    std::function<void(const OffspringEvent&)> on_offspring;     // every cycle
+    std::function<void(const IterationSnapshot&)> on_iteration;  // init + each iteration
+};
+```
+
+* `OffspringEvent` carries the cycle number, the operation (`insert_node`,
+  `crossover`, `parent_copy`, …), parent(s), child, the number of rejected
+  proposals, whether constants were optimized, and the replaced slot. It is
+  reported just before the child replaces the oldest member, so all references
+  are valid.
+* `IterationSnapshot` carries the population and the current Pareto front after
+  initialization and after each iteration. A final snapshot is added when a stopping
+  rule ends an iteration early. Duplicate snapshots are suppressed.
+
+The callbacks **consume no random numbers**, so an observed run is bit-identical
+to an unobserved one; `observer_tests` checks this. `Variation::Offspring` gained an
+`operation` field for the same purpose. When no observer is set, the cost is one
+empty `std::function` check per cycle.
+
 ---
 
 ## 7. Programs
@@ -484,7 +511,18 @@ identical results.
   adapter, so the 30.11/07.12 comparison can read both. Options cover operators,
   loss, limits (`--max-size`, `--max-depth`, `--constraint OP:A[:B]`,
   `--max-exponent`, `--integer-exponent`), stopping rules and the main search
-  parameters; see `sr_search --help`.
+  parameters (`--tournament`, `--win-probability`, `--crossover`, `--optimize`);
+  see `sr_search --help`. `--output` also writes `progress.csv`
+  (`iterations,offspring,seconds,best_train_loss,front_size`, one row per snapshot).
+  `--trace FILE` writes a JSON trace for the visualizer, with this shape:
+  - `label`, `features`, `target`;
+  - `rows`: up to ~200 training rows;
+  - `options`;
+  - `snapshots`: population as `[complexity, loss]` plus the Pareto front with expressions;
+  - `events`: the first 60 cycles and every cycle that improved the best loss, capped at 400;
+  - `result`.
+
+  Plot-only numbers are written with 6 significant digits to keep traces small.
 * **`sr_custom [PROJECTILE_CSV]`**: registers `exp`, `hypot` and a Huber loss,
   evaluates them, shows rejected cases (overflow, duplicate registration), and then
   runs the unchanged search with `hypot` and the Huber loss.
@@ -526,6 +564,7 @@ Debug, in Release and with AddressSanitizer + UndefinedBehaviorSanitizer
 | `variation_property_tests` | 10 seeds × (40 generated trees + 400 steps): every generated tree and every returned offspring is well-formed and admissible; some raw edits *are* inadmissible (the limits are actually exercised); each mutation does what its name says |
 | `constant_optimization_tests` | `a·x+b` fitted to (2.5, 0.75); evaluation budget; tree without constants; forbidden (+∞) region never entered |
 | `search_tests` | determinism; Pareto shape; iteration/target/time stopping rules; spring law recovered with 5 nodes and test MSE < 1e-20 on new data; CSV output |
+| `observer_tests` | one event per offspring in order, known operation names, crossover ⇔ second parent, the oldest slot is replaced, snapshots after init and each iteration, and an observed run equals an unobserved one |
 | `constrained_search_tests` | the final population and hall of fame of a constrained search are admissible; rejections happened |
 | `undefined_arithmetic_search_tests` | data contain x = 0 and the operators include `/` and `pow`: undefined candidates occur and are rejected, and x² is still found |
 | `custom_operator_search_tests` | a custom `hypot`, a custom loss (call counter) and a throwing custom unary operator: the loss drives the search, `hypot` is found, domain errors are rejected |
@@ -565,7 +604,56 @@ These are smoke results with a 2–4 s budget. The planned comparison uses 90 s,
 
 ---
 
-## 10. Decision log
+## 10. Presentation and visualizer (`presentation/`)
+
+The 23.11 presentation is built from the same real runs that the tests and docs
+describe. Nothing in it is mocked.
+
+| File | Role |
+|---|---|
+| `make_traces.sh` | builds Release, generates data, runs `sr_search` five times with `--trace` and `--output`, writes `traces.js` and `data/*.csv` |
+| `traces.js` | `window.SR_TRACES = [...]`: five traces (spring, projectile, constrained projectile with `pow`, oscillator, and a deliberately included failed run) |
+| `visualizer.html` | self-contained viewer (no CDN, works from `file://` and offline) |
+| `slides.tex` | Beamer deck, 17 slides; pgfplots charts read `data/*.csv` |
+| `README.md` | preparation commands, timed speaker script, live-demo runbook, expected questions (Polish) |
+
+`traces.js` is a script rather than JSON because browsers block `fetch()` of local
+files. A `<script src>` works from `file://`.
+
+**The viewer** has three sections:
+1. *One cycle*: the six steps of a cycle (tournament, variation, constraints,
+   evaluation, constants, replacement) light up one after another for a recorded
+   event. Parent, second parent (crossover) and child are drawn as trees.
+   "Only new records" filters to events that improved the best loss.
+2. *Run*: a slider or play button over snapshots drives three linked charts:
+   - the best train loss versus offspring (log scale);
+   - the Pareto front over the population cloud (complexity versus log loss);
+   - the fit of the lowest-loss formula: data and curve for one feature, or
+     predicted versus observed for two.
+3. *Result*: statistics and the final front table, with the selected model marked.
+
+Implementation notes:
+* It parses `Expression::to_string()` output with a small recursive-descent parser.
+* It evaluates formulas in JS for the fit chart, using built-in operators plus `hypot`
+  and `exp`.
+* It prints infix formulas with Polish decimal commas.
+* It lays out trees by assigning leaves consecutive x positions and centring parents.
+* Charts are hand-written SVG and follow the data-viz rules:
+  - one axis per chart;
+  - a validated blue/orange palette in light and dark;
+  - neutral grey for the de-emphasized population;
+  - hover tooltips;
+  - text never in series colours.
+* Exact zero losses are drawn at a 1e-32 floor.
+* Keyboard: ←/→ step cycles, space plays the run.
+
+The slides cite only measured numbers. Their plots and the visualizer are
+generated from the same runs, and `make_traces.sh` reproduces them
+deterministically; only the timing fields change between runs.
+
+---
+
+## 11. Decision log
 
 | Decision | Alternatives | Reason |
 |---|---|---|
@@ -581,10 +669,12 @@ These are smoke results with a 2–4 s budget. The planned comparison uses 90 s,
 | Coordinate search with parabolic step | BFGS (PySR), Nelder–Mead | required by the plan; derivative-free; exact for linear coefficients |
 | Validation selection with tolerance and round-off floor | plain minimum, PySR "best" score | plain minimum overfits; simple rule is enough so far |
 | No simulated annealing, no adaptive parsimony, no simplification | as in PySR | outside the agreed scope for now; candidates for later work |
+| Observer callbacks instead of logging inside the search | printing from `fit`, a trace file written by the library | the library stays I/O-free; any front end (CLI trace, tests, future GUI) can observe; no effect on results |
+| Offline hand-written SVG viewer fed by `traces.js` | chart library from a CDN, a live server | must work in a lecture room without network or a build step |
 
 ---
 
-## 11. Known limitations and next steps
+## 12. Known limitations and next steps
 
 * Single population, no migration, no annealing, no algebraic simplification
   (see section 9 for their visible effects).

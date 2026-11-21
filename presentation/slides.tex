@@ -1,0 +1,533 @@
+% Prezentacja postępów na 23.11.2026. Kompilacja (z katalogu głównego repozytorium):
+%   XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides.tex
+% Wykresy korzystają z presentation/data/*.csv (presentation/make_traces.sh).
+\documentclass[aspectratio=169,11pt]{beamer}
+\usepackage{fontspec}
+\usepackage[polish]{babel}
+\usepackage{tikz,pgfplots,booktabs,listings,xcolor,array}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc}
+\pgfplotsset{compat=1.18}
+
+\definecolor{accent}{HTML}{2A78D6}
+\definecolor{accent2}{HTML}{EB6834}
+\definecolor{ink}{HTML}{0B0B0B}
+\definecolor{muted}{HTML}{52514E}
+\definecolor{faint}{HTML}{A9A79F}
+\definecolor{gridc}{HTML}{E6E4DE}
+\definecolor{wash}{HTML}{E4EEFA}
+\definecolor{wash2}{HTML}{FCE6DC}
+\definecolor{surface}{HTML}{EFEEEA}
+\setbeamercolor{normal text}{fg=ink}
+\setbeamercolor{structure}{fg=accent}
+\setbeamercolor{frametitle}{fg=ink}
+\setbeamercolor{title}{fg=ink}
+\setbeamercolor{alerted text}{fg=accent2}
+\setbeamerfont{frametitle}{series=\bfseries,size=\Large}
+\setbeamerfont{title}{series=\bfseries,size=\LARGE}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize items}{\textbullet}
+\setbeamertemplate{footline}{\hfill\scriptsize\color{muted}\insertframenumber\,/\,\inserttotalframenumber\hspace{1.2em}\vspace{0.8em}}
+\setbeamertemplate{frametitle}{\vspace{0.6em}\insertframetitle\par\vspace{-0.2em}{\color{accent}\rule{2.2em}{2pt}}}
+\lstset{basicstyle=\ttfamily\footnotesize, keywordstyle=\color{accent}\bfseries, commentstyle=\color{muted},
+  stringstyle=\color{accent2}, language=C++, columns=fullflexible, keepspaces, showstringspaces=false}
+
+\tikzset{
+  op/.style={circle, draw=muted, fill=surface, minimum size=7mm, inner sep=0pt, font=\small},
+  var/.style={rectangle, rounded corners=2pt, draw=faint, fill=wash, minimum size=6mm, font=\small\itshape},
+  cst/.style={rectangle, rounded corners=2pt, draw=faint, fill=wash2, minimum size=6mm, font=\small},
+  box/.style={rectangle, rounded corners=4pt, draw=faint, fill=white, align=center, font=\small,
+    minimum height=13mm, text width=24mm},
+  arrow/.style={-{Stealth[length=2.2mm]}, thick, color=muted},
+  level distance=10mm,
+}
+\pgfplotsset{
+  srplot/.style={width=\linewidth, height=5.4cm, axis lines=left, grid=major, grid style={gridc},
+    tick label style={font=\scriptsize, color=muted}, label style={font=\footnotesize, color=muted},
+    every axis plot/.append style={line width=1.2pt}, legend style={draw=none, font=\scriptsize, fill=none},
+    legend cell align=left},
+}
+
+\title{Regresja symboliczna w C++23}
+\subtitle{Wyszukiwanie ewolucyjne, konfigurowalność i ograniczenia złożoności}
+\author{Studio projektowe 1}
+\date{23 listopada 2026}
+
+\begin{document}
+
+% ---------------------------------------------------------------------------- 1
+\begin{frame}[plain]
+  \vspace{2em}
+  {\usebeamerfont{title}\inserttitle\par}
+  \vspace{0.4em}
+  {\large\color{muted}\insertsubtitle\par}
+  \vspace{1.2em}
+  {\color{accent}\rule{4em}{3pt}}\par\vspace{1.2em}
+  \insertauthor\par
+  {\color{muted}\insertdate\ \textperiodcentered\ etap: konfigurowalność i ograniczenia}
+  \vfill
+  \begin{tikzpicture}[overlay, remember picture, level distance=11mm,
+      level 1/.style={sibling distance=26mm}, level 2/.style={sibling distance=13mm}]
+    \node[op] at ($(current page.south east)+(-3.2,3.4)$) {$+$}
+      child { node[op] {$\times$} child { node[cst] {2,5} } child { node[var] {x} } }
+      child { node[cst] {0,75} };
+  \end{tikzpicture}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 2
+\begin{frame}{Stan harmonogramu}
+  \begin{columns}[T]
+    \begin{column}{0.58\textwidth}
+      \small
+      \begin{tabular}{@{}l l c@{}}
+        \toprule
+        Termin & Etap & Stan \\
+        \midrule
+        19.10 & środowisko, dane, próba PySR & \textcolor{accent}{\checkmark} \\
+        26.10 & drzewa wyrażeń, obliczanie, rejestr & \textcolor{accent}{\checkmark} \\
+        09.11 & wyszukiwanie ewolucyjne & \textcolor{accent}{\checkmark}\,* \\
+        16.11 & MVP: stałe, hall of fame, predykcja & \textcolor{accent}{\checkmark}\,* \\
+        \textbf{23.11} & \textbf{konfigurowalność i ograniczenia} & \textcolor{accent}{\checkmark} \\
+        30.11 & szablon wyrażenia, zamrożenie & --- \\
+        07.12 & 36 uruchomień: C++ vs PySR & --- \\
+        \bottomrule
+      \end{tabular}\par\medskip
+      {\footnotesize\color{muted}* zrealizowane z opóźnieniem, razem z etapem 23.11}
+    \end{column}
+    \begin{column}{0.38\textwidth}
+      \textbf{Dziś}
+      \begin{itemize}\small
+        \item algorytm i jego elementy
+        \item własne operatory i funkcja straty
+        \item limity złożoności i jak są egzekwowane
+        \item testy i wstępne wyniki
+        \item pokaz działania + wizualizacja
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 3
+\begin{frame}{Problem: z danych do wzoru}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{tikzpicture}
+        \begin{axis}[srplot, height=5cm, xlabel={$x$ [m]}, ylabel={$F$ [N]}]
+          \addplot[only marks, mark=*, mark size=1.3pt, color=faint, samples=40, domain=-2:2]
+            {2.5*x + 0.75 + 0.15*rand};
+          \addplot[color=accent, domain=-2:2, samples=2] {2.5*x + 0.75};
+        \end{axis}
+      \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item Wejście: tabela \texttt{CSV} (zmienne $\rightarrow$ cel)
+        \item Wyjście: \alert{wzór}, a nie czarna skrzynka\\[2pt]
+          \hspace*{1em}$F = 2{,}5\,x + 0{,}75$
+        \item Szukamy jednocześnie \textbf{struktury} i \textbf{stałych}
+        \item Wiele wzorów: kompromis \textbf{dokładność $\leftrightarrow$ złożoność}
+      \end{itemize}
+      \medskip
+      {\small\color{muted}Dane: sprężyna, rzut pionowy $h=v_0t-4{,}905t^2$, oscylator $x=1{,}5\cos(2t+0{,}3)$;
+      podział 256/128/256, wariant z szumem 1\%.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 4
+\begin{frame}[fragile]{Reprezentacja: drzewo wyrażenia}
+  \begin{columns}[c]
+    \begin{column}{0.34\textwidth}
+      \centering
+      \begin{tikzpicture}[level 1/.style={sibling distance=24mm}, level 2/.style={sibling distance=12mm}]
+        \node[op] {$-$}
+          child { node[op] {$\times$} child { node[var] {v0} } child { node[var] {t} } }
+          child { node[op] {$\times$} child { node[cst] {4,905} } child { node[op] {sq} child { node[var] {t} } } };
+      \end{tikzpicture}\par\medskip
+      {\small $h = v_0 t - 4{,}905\,t^2$ \quad(8 węzłów)}
+    \end{column}
+    \begin{column}{0.64\textwidth}
+\begin{lstlisting}
+class Expression {
+  Kind kind_;         // constant/variable/unary/binary
+  double value_;      // constant value
+  std::string name_;  // variable or operator name
+  std::vector<Expression> children_;  // by value
+};
+\end{lstlisting}
+      \begin{itemize}\small
+        \item węzeł przechowuje \textbf{nazwę} operatora; funkcja z rejestru
+        \item kopie niezależne $\Rightarrow$ bezpieczne mutacje
+        \item złożoność = liczba węzłów (jak w PySR)
+        \item \texttt{predict}: drzewo kompilowane raz do programu postfiksowego
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 5
+\begin{frame}{Algorytm: jeden cykl ewolucji}
+  \centering
+  \begin{tikzpicture}[node distance=4mm, box/.append style={text width=21mm}]
+    \node[box] (t) {\textbf{Turniej}\\8 osobników,\\$p=0{,}7$};
+    \node[box, right=of t] (v) {\textbf{Wariacja}\\mutacja (80\%)\\krzyżowanie (20\%)};
+    \node[box, right=of v] (c) {\textbf{Ograniczenia}\\odrzuć i losuj\\ponownie};
+    \node[box, right=of c] (e) {\textbf{Ocena}\\MSE na treningu\\błąd $\Rightarrow\infty$};
+    \node[box, right=of e] (r) {\textbf{Zastąpienie}\\najstarszego\\osobnika};
+    \draw[arrow] (t) -- (v); \draw[arrow] (v) -- (c); \draw[arrow] (c) -- (e); \draw[arrow] (e) -- (r);
+    \draw[arrow] (r.south) -- ++(0,-6mm) -| (t.south) node[pos=0.25, below, font=\footnotesize, color=muted]
+      {populacja $n$ osobników; iteracja = $n$ cykli};
+    \node[box, above=7mm of e, text width=38mm, fill=wash] (h) {\textbf{Hall of fame}\\najlepszy wzór dla każdej złożoności};
+    \node[box, above=7mm of v, text width=38mm, fill=wash2] (o) {\textbf{Optymalizacja stałych}\\5\% potomków + hall of fame};
+    \draw[arrow] (e) -- (h);
+    \draw[arrow, dashed] (o) -- (v);
+  \end{tikzpicture}
+  \medskip
+  \begin{itemize}\small
+    \item \emph{Regularized evolution} (jak w PySR): starzenie się populacji utrzymuje różnorodność
+    \item Konfigurowalne: rozmiar populacji, liczba iteracji, ziarno, limit czasu, docelowa strata
+    \item Ustalone ziarno i brak limitu czasu $\Rightarrow$ wynik powtarzalny co do bitu
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 6
+\begin{frame}{Mutacje i krzyżowanie}
+  \begin{columns}[T]
+    \begin{column}{0.4\textwidth}
+      \footnotesize
+      \begin{tabular}{@{}ll@{}}
+        \toprule
+        Mutacja & Przykład \\ \midrule
+        zmiana stałej & $c \rightarrow c + \mathcal{N}(0,\sigma^2)$ \\
+        zmiana operatora & $a + b \rightarrow a \times b$ \\
+        zamiana liścia & $x \rightarrow 1{,}3$ \\
+        nowe poddrzewo & losowe, w limitach \\
+        wstawienie węzła & $a \rightarrow \cos(a)$ \\
+        usunięcie węzła & $a + b \rightarrow a$ \\
+        \bottomrule
+      \end{tabular}\par\medskip
+      {\footnotesize\color{muted}Węzły adresowane w kolejności preorder; edycja zwraca nowe drzewo.}
+    \end{column}
+    \begin{column}{0.57\textwidth}
+      \textbf{Krzyżowanie} {\small(cykl 16, rzut pionowy)}\par\medskip
+      \begin{tikzpicture}[level 1/.style={sibling distance=15mm}, level 2/.style={sibling distance=9mm},
+          level distance=9mm, scale=0.95, transform shape]
+        \node[op] (a) {$\div$}
+          child { node[var] {v0} }
+          child { node[op] {$\div$}
+            child { node[op, fill=wash2, draw=accent2, very thick] {$\times$} child { node[cst] {1,57} } child { node[var] {v0} } }
+            child { node[op] {$+$} child { node[var] {v0} } child { node[cst] {-1,02} } } };
+        \node[op, right=27mm of a] (b) {$-$}
+          child { node[var, fill=wash2, draw=accent2, very thick] {v0} }
+          child { node[cst] {1,67} };
+        \node[font=\scriptsize, color=muted, left=2mm of a] {rodzic 1};
+        \node[font=\scriptsize, color=muted, right=2mm of b] {rodzic 2};
+      \end{tikzpicture}\par
+      {\small potomek: $v_0 \,/\, \bigl(v_0 / (v_0 - 1{,}02)\bigr)$, MSE 45,5\\
+      \color{muted}gorszy potomek też trafia do populacji --- selekcja zdecyduje później}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 7
+\begin{frame}{Optymalizacja stałych: przeszukiwanie współrzędnych}
+  \begin{columns}[c]
+    \begin{column}{0.46\textwidth}
+      \begin{tikzpicture}
+        \begin{axis}[srplot, height=5cm, xlabel={wartość stałej $c_i$}, ylabel={strata $L$}, yticklabels={}, xticklabels={},
+            xmin=-0.2, xmax=3.2, ymin=0, ymax=5]
+          \addplot[color=faint, domain=-0.2:3.2, samples=60] {0.6*(x-2.2)^2 + 0.4};
+          \addplot[only marks, mark=*, mark size=2.5pt, color=accent] coordinates {(0.6,1.936) (1.2,1.0) (1.8,0.496)};
+          \addplot[only marks, mark=*, mark size=3pt, color=accent2] coordinates {(2.2,0.4)};
+          \node[font=\scriptsize, color=muted] at (axis cs:0.6,2.5) {$c-h$};
+          \node[font=\scriptsize, color=muted] at (axis cs:1.2,1.55) {$c$};
+          \node[font=\scriptsize, color=muted] at (axis cs:1.8,1.05) {$c+h$};
+          \node[font=\scriptsize, color=ink] at (axis cs:2.45,0.95) {$c^*$};
+        \end{axis}
+      \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.52\textwidth}
+      Dla każdej stałej po kolei:
+      \begin{enumerate}\small
+        \item oblicz $L(c_i \pm h_i)$
+        \item jeśli wypukło, wierzchołek paraboli\\[2pt]
+          $c^* = c_i - h_i\,\dfrac{L_+ - L_-}{2(L_+ - 2L_0 + L_-)}$
+        \item przyjmij najlepszy punkt; porażka $\Rightarrow h_i/2$
+      \end{enumerate}
+      \begin{itemize}\small
+        \item bez gradientów (zgodnie z planem zamiast BFGS)
+        \item stała liniowa przy MSE $\Rightarrow$ \alert{dokładnie w 1 kroku}
+        \item test: $a x + b$ z $(1, 0)$ $\rightarrow$ $(2{,}5;\ 0{,}75)$ z błędem $<10^{-9}$
+        \item strata $\infty$ dla drzew niedopuszczalnych
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 8
+\begin{frame}{Hall of fame, front Pareta i wybór modelu}
+  \begin{columns}[c]
+    \begin{column}{0.52\textwidth}
+      \begin{tikzpicture}
+        \begin{axis}[srplot, height=5.2cm, ymode=log, xlabel={złożoność (liczba węzłów)}, ylabel={MSE (trening)},
+            xmin=0, xmax=9, xtick={1,3,5,7}, ymin=1e-32, ymax=1e3, ytick={1e2,1e-8,1e-18,1e-28}]
+          \addplot[const plot, color=accent, mark=*, mark size=2pt] table[x=complexity, y=train, col sep=comma]
+            {data/projectile_front.csv};
+          \addplot[only marks, mark=o, mark size=5pt, color=accent2, line width=1.5pt] coordinates {(7,1.4686660273410966e-30)};
+          \node[font=\scriptsize, anchor=north] at (axis cs:1,2) {stała};
+          \node[font=\scriptsize, anchor=north] at (axis cs:5,1) {$t(v_0 - 7{,}28)$};
+          \node[font=\scriptsize, anchor=east] at (axis cs:6.7,1e-27) {$t\,(v_0 - 4{,}905\,t)$};
+        \end{axis}
+      \end{tikzpicture}\par
+      {\scriptsize\color{muted}Rzut pionowy bez szumu, ziarno 2 (rzeczywiste uruchomienie)}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{itemize}\small
+        \item Hall of fame: najlepszy wzór \textbf{dla każdej złożoności}
+        \item Front Pareta: tylko wzory lepsze od wszystkich prostszych
+        \item Wybór na \textbf{danych walidacyjnych}:\\
+          najprostszy wzór o stracie $\le \max(1{,}05\,L_{\min},\ 10^{-12} L_1)$
+        \item czyste minimum wybierało dla sprężyny wzory o złożoności 13--19
+        \item eksport: \texttt{hall\_of\_fame.csv}, \texttt{result.json}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 9
+\begin{frame}[fragile]{Konfigurowalność: własne operatory i funkcja straty}
+  \begin{columns}[c]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+sr::FunctionRegistry functions;
+functions.add_binary("hypot",
+    [](double a, double b) { return std::hypot(a, b); });
+functions.add_loss("huber", [](double p, double y) {
+    const double e = std::abs(p - y);
+    return e <= 1 ? 0.5 * e * e : e - 0.5;
+});
+
+sr::SearchOptions options;
+options.binary_operators = {"+", "-", "*", "hypot"};
+options.unary_operators  = {"exp"};
+options.loss = "huber";   // names only
+auto result = sr::fit(forces, options, functions);
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \textbf{Wynik} (\texttt{sr\_custom}):\\[3pt]
+      wypadkowa prostopadłych sił\\[2pt]
+      \hspace*{1em}$|F| = \mathrm{hypot}(F_y, F_x)$\\[2pt]
+      strata Hubera $= 0$, złożoność 3
+      \medskip
+      \begin{itemize}\small
+        \item pętla wyszukiwania \textbf{bez zmian}: zna tylko nazwy
+        \item zła arność, nieznana nazwa $\Rightarrow$ błąd przed startem
+        \item wyjątek dziedziny w funkcji użytkownika $\Rightarrow$ kandydat odrzucony
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 10
+\begin{frame}{Ograniczenia złożoności}
+  \begin{columns}[T]
+    \begin{column}{0.36\textwidth}
+      \begin{itemize}\small
+        \item \texttt{max\_size}, \texttt{max\_depth}
+        \item rozmiar argumentów operatora\\
+          {\footnotesize\color{muted}jak \texttt{constraints} w PySR}
+        \item wykładnik potęgi: stała, $|e| \le k$, opcjonalnie całkowita
+        \item \texttt{pow} bez ,,ochrony'': $(-8)^{1/3}$, $0^{-1}$, przepełnienie $\Rightarrow$ błąd dziedziny
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.62\textwidth}
+      {\small Wynik \texttt{violation()} (\texttt{sr\_constraints}):}\par\smallskip
+      \scriptsize
+      \begin{tabular}{@{}l l@{}}
+        \toprule
+        Wzór & Reguła \\ \midrule
+        $t^{2}$ & dopuszczalny \\
+        $t^{2{,}5}$ & \texttt{exponent 2.5 of pow must be an integer} \\
+        $t^{4}$ & \texttt{exponent 4 of pow exceeds |3|} \\
+        $t^{t}$ & \texttt{exponent of pow must be a constant} \\
+        $(t + t\cdot t)^2$ & \texttt{argument 1 of pow has size 5 > 3} \\
+        $\cos(2(t+1))$ & \texttt{argument 1 of cos has size 5 > 3} \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 11
+\begin{frame}{Jak wyszukiwanie przestrzega limitów}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \textbf{1. Z konstrukcji}
+      \begin{itemize}\small
+        \item generator dzieli budżet rozmiaru między argumenty i obcina go do limitu
+        \item wykładnik losowany z dozwolonego zakresu
+      \end{itemize}
+      \textbf{2. Filtr po każdej wariacji}
+      \begin{itemize}\small
+        \item ograniczenia + dozwolone operatory (z arnością) + zmienne
+        \item niedopuszczalna propozycja $\Rightarrow$ losuj ponownie (do 10 razy)
+        \item brak sukcesu $\Rightarrow$ kopia rodzica
+      \end{itemize}
+      \textbf{3. Optymalizator stałych}
+      \begin{itemize}\small
+        \item drzewo niedopuszczalne ma stratę $\infty$
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{Rzut pionowy z ograniczeniami}\\
+      {\footnotesize\color{muted}\texttt{max\_size} 11, \texttt{pow} (3, 1), $|e|\le 3$ całkowity}\par\medskip
+      \begin{tabular}{@{}lr@{}}
+        potomkowie & 3\,840 \\
+        odrzucone propozycje & \textbf{1\,144} \\
+        dopuszczalni na końcu & \textbf{69 / 69} \\
+      \end{tabular}\par\medskip
+      {\small Test własności: 10 ziaren $\times$ 4\,000 kroków ---\\ każdy potomek dopuszczalny, a część surowych propozycji narusza limity (limity są aktywne).}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 12
+\begin{frame}{Testy}
+  \small
+  \begin{tabular}{@{}p{0.3\textwidth} p{0.64\textwidth}@{}}
+    \toprule
+    Grupa & Co sprawdza \\ \midrule
+    edycja drzew, \texttt{pow} & indeksy preorder, niezmienność oryginału; $(-8)^{1/3}$, $0^{-1}$, $10^{400}$ \\
+    ograniczenia & każda reguła \textbf{dokładnie na granicy} przechodzi, krok dalej --- nie \\
+    konfiguracja & 27 niepoprawnych ustawień odrzuconych przed startem \\
+    wariacja & 10 ziaren: wszyscy potomkowie poprawni i dopuszczalni \\
+    optymalizacja stałych & $a x + b$ na ustalonym wyrażeniu, budżet, obszar $\infty$ \\
+    wyszukiwanie & powtarzalność, 3 reguły zatrzymania, kształt frontu, sprężyna: 5 węzłów, testowe MSE $< 10^{-20}$ \\
+    własne funkcje & \texttt{hypot} odnaleziony, własna strata wywoływana, wyjątki odrzucane \\
+    obserwator & zapis przebiegu nie zmienia wyniku \\
+    \bottomrule
+  \end{tabular}\par\medskip
+  CTest: 2 programy testowe + 5 przykładów; Debug, Release, AddressSanitizer + UBSan\\
+  bez ostrzeżeń: \texttt{-Wall -Wextra -Wpedantic -Wconversion -Wshadow}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 13
+\begin{frame}{Wstępne wyniki (budżet 1--4 s, nie jest to porównanie)}
+  \begin{columns}[c]
+    \begin{column}{0.55\textwidth}
+      \small
+      \begin{tabular}{@{}llcc@{}}
+        \toprule
+        Zależność & Wariant & Odtworzono & Złożoność \\ \midrule
+        sprężyna & bez szumu & 3/3 & 5 \\
+        sprężyna & z szumem & 3/3 & 5 \\
+        rzut pionowy & bez szumu & 1/3 & 7 \\
+        rzut pionowy & z szumem & 2/3 & 7 \\
+        oscylator & bez szumu & 2/3 & 9 \\
+        oscylator & z szumem & 1/3 & 8 \\
+        \bottomrule
+      \end{tabular}\par\medskip
+      {\footnotesize\color{muted}18 uruchomień: 200 iteracji $\times$ 100 potomków, ziarna 0--2; wybór na walidacji, ocena na teście.
+      Z szumem: MSE testowe $\approx$ wariancja szumu.}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \begin{itemize}\small
+        \item sprężyna: $(x + 0{,}3)/0{,}4 = 2{,}5x + 0{,}75$
+        \item rzut: $t\,(v_0 - 4{,}905\,t)$, MSE $1{,}6\cdot10^{-30}$
+        \item oscylator: $1{,}5\cos(t + (t + 0{,}3))$
+        \item budżet 15 s: 3 z 5 nieudanych zostało odtworzonych
+        \item planowane porównanie: \textbf{90 s}, 36 uruchomień
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 14
+\begin{frame}{Przebieg udany i nieudany (ten sam problem)}
+  \begin{columns}[c]
+    \begin{column}{0.56\textwidth}
+      \begin{tikzpicture}
+        \begin{axis}[srplot, height=5.4cm, ymode=log, xlabel={liczba potomków}, ylabel={najlepsze MSE (trening)},
+            xmin=0, xmax=20000, ymin=1e-32, ymax=1e3, ytick={1e0,1e-10,1e-20,1e-30},
+            scaled x ticks=false, xticklabel style={/pgf/number format/1000 sep={\,}},
+            legend pos=south west]
+          \addplot[const plot, color=accent] table[x=offspring, y=loss, col sep=comma] {data/projectile_progress.csv};
+          \addlegendentry{ziarno 2: odtworzony wzór}
+          \addplot[const plot, color=accent2] table[x=offspring, y=loss, col sep=comma] {data/failure_progress.csv};
+          \addlegendentry{ziarno 0: lokalne optimum}
+        \end{axis}
+      \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \textbf{Wnioski}
+      \begin{itemize}\small
+        \item jedna populacja może utknąć; dłuższy czas nie pomaga
+          {\footnotesize\color{muted}(PySR: 31 wysp z migracją)}
+        \item $p=0{,}9 \rightarrow 0{,}7$ w turnieju: rzut odtworzony 0/3 $\rightarrow$ 3/3
+        \item składnik $7{,}6\cdot10^{-8}/t$: niewidoczny na walidacji, wybucha dla $t\approx0$ na teście
+        \item brak upraszczania: $t + (t + c)$ zamiast $2t + c$
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 15
+\begin{frame}[fragile]{Pokaz działania}
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+\begin{lstlisting}[language=bash, basicstyle=\ttfamily\scriptsize]
+# 1. sprezyna, dane generowane w pamieci
+build-rel/sr_search --iterations 40
+
+# 2. rzut pionowy: train / validation / test
+D=artifacts/data/projectile_clean
+build-rel/sr_search ${D}_train.csv ${D}_validation.csv \
+    ${D}_test.csv --seed 2 \
+    --iterations 200 --population 100
+
+# 3. ograniczenia i wlasne funkcje
+build-rel/sr_constraints
+build-rel/sr_custom
+
+# 4. wizualizacja przebiegu
+xdg-open presentation/visualizer.html
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.4\textwidth}
+      \textbf{Wizualizacja} (zapis rzeczywistych uruchomień)
+      \begin{itemize}\small
+        \item jeden cykl: rodzic, operacja, potomek, kroki
+        \item przebieg: krzywa straty, front Pareta na tle populacji, dopasowanie do danych
+        \item wynik: front, wybrany wzór, statystyki
+        \item 5 uruchomień, w tym nieudane
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 16
+\begin{frame}{Dalsze prace}
+  \small
+  \begin{tabular}{@{}l p{0.78\textwidth}@{}}
+    \toprule
+    30.11 & szablon: stała struktura zewnętrzna + jedno uczone poddrzewo, jawne listy zmiennych;
+            narzędzie pomiarowe; zamrożenie danych i konfiguracji \\
+    07.12 & 36 uruchomień C++ vs PySR (90 s, 1 wątek, te same dane, operatory i limity);
+            mikropomiar obliczania wyrażeń \\
+    14.12 & raport LaTeX, instrukcja odtworzenia, kompilacja w czystym katalogu \\
+    21.12 & prezentacja końcowa i oddanie \\
+    \bottomrule
+  \end{tabular}\par\bigskip
+  \textbf{Do rozważenia} (poza zakresem planu): kilka populacji, upraszczanie wzorów, \texttt{nested\_constraints}
+\end{frame}
+
+% ---------------------------------------------------------------------------- 17
+\begin{frame}[plain]
+  \centering\vfill
+  {\LARGE\bfseries Dziękuję. Pytania?}\par\bigskip
+  {\color{muted} kod, testy, raport: repozytorium projektu\\
+  szczegóły implementacji: \texttt{project\_explanation.md}}
+  \vfill
+\end{frame}
+
+\end{document}

@@ -8,7 +8,8 @@ cmake -S "$root" -B "$build" -DCMAKE_BUILD_TYPE=Release >/dev/null
 cmake --build "$build" -j 4 --target sr_search sr_generate >/dev/null
 data="$root/artifacts/data"
 out="$root/artifacts/traces"
-mkdir -p "$out"
+slides="$root/presentation/data"
+mkdir -p "$out" "$slides"
 "$build/sr_generate" "$data" >/dev/null
 
 run() {  # id label problem variant seed iterations population [extra options...]
@@ -16,7 +17,12 @@ run() {  # id label problem variant seed iterations population [extra options...
     shift 7
     "$build/sr_search" "$data/${problem}_${variant}_train.csv" "$data/${problem}_${variant}_validation.csv" \
         "$data/${problem}_${variant}_test.csv" --seed "$seed" --iterations "$iterations" \
-        --population "$population" --label "$label" --trace "$out/$id.json" "$@" >/dev/null
+        --population "$population" --label "$label" --trace "$out/$id.json" --output "$out/$id" "$@" >/dev/null
+    # Plot data for the slides: zero losses (exact fits) are clamped to 1e-32 for log axes.
+    awk -F, 'NR == 1 { print "offspring,loss"; next } { v = ($4 == "" || $4 + 0 < 1e-32) ? 1e-32 : $4; print $2 "," v }' \
+        "$out/$id/progress.csv" > "$slides/${id}_progress.csv"
+    awk -F, 'NR == 1 { print "complexity,train,selected"; next } { v = ($2 + 0 < 1e-32) ? 1e-32 : $2; print $1 "," v "," $4 }' \
+        "$out/$id/hall_of_fame.csv" > "$slides/${id}_front.csv"
     echo "  $id: $(grep -o '"equation":"[^"]*"' "$out/$id.json" | tail -1)"
 }
 

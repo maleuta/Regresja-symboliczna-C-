@@ -22,7 +22,8 @@ Szczegółowy opis kodu i decyzji projektowych (po angielsku):
 | `apps/constraints.cpp` | Sprawdzanie reguł i wyszukiwanie z ograniczeniami (projectile) |
 | `apps/search.cpp` | Program `sr_search`: dopasowanie, wybór na walidacji, test, eksport |
 | `tests/test_sr.cpp` | Wartości wzorcowe, dziedziny, błędne CSV i powtarzalność danych |
-| `tests/test_search.cpp` | Edycja drzew, `pow`, ograniczenia, mutacje, optymalizacja, wyszukiwanie |
+| `tests/test_search.cpp` | Edycja drzew, `pow`, ograniczenia, mutacje, optymalizacja, wyszukiwanie, obserwator |
+| `presentation/` | Slajdy, wizualizacja przebiegu, dane uruchomień, scenariusz pokazu |
 | `baseline/` | Wyłącznie adapter do uruchamiania PySR i przypięte zależności Pythona |
 | `report/report.tex` | Samodzielny szkic artykułu LaTeX |
 
@@ -153,8 +154,23 @@ konfiguracja (nieznany operator, zła arność, limit dla operatora spoza zbioru
 itp.) powoduje `std::invalid_argument` przed startem.
 
 `sr_search --help` opisuje opcje programu. `--output DIR` zapisuje
-`hall_of_fame.csv` oraz `result.json` z konfiguracją, statystykami, wzorem
-i błędami (nazwy pól zgodne z adapterem PySR).
+`hall_of_fame.csv`, `progress.csv` (najlepsza strata po każdej iteracji) oraz
+`result.json` z konfiguracją, statystykami, wzorem i błędami (nazwy pól zgodne
+z adapterem PySR). `--trace PLIK` zapisuje przebieg w JSON dla wizualizacji.
+`options.observer` pozwala obserwować każdy cykl i każdą iterację bez wpływu
+na wynik.
+
+## Prezentacja i wizualizacja
+
+Katalog `presentation/` zawiera slajdy Beamer (`slides.tex`), wizualizację
+przebiegu wyszukiwania (`visualizer.html`, działa offline po otwarciu pliku
+w przeglądarce), dane z rzeczywistych uruchomień (`traces.js`, `data/`) oraz
+scenariusz pokazu z poleceniami (`presentation/README.md`). Dane odtwarza
+`presentation/make_traces.sh`; slajdy kompiluje:
+
+```sh
+XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides.tex
+```
 
 ## Próba PySR
 
