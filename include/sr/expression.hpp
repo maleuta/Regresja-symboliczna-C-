@@ -45,6 +45,15 @@ public:
     const std::vector<Expression>& children() const { return children_; }
     std::size_t size() const;
     std::size_t depth() const;
+
+    // Node addressing in preorder (root = 0, then the left subtree, then the right one).
+    // Trees are immutable values: editing returns a new tree and leaves *this unchanged.
+    const Expression& subtree(std::size_t index) const;
+    Expression replaced(std::size_t index, Expression replacement) const;
+    // Constants in preorder; with_constants expects exactly constants().size() finite values.
+    std::vector<double> constants() const;
+    Expression with_constants(std::span<const double> values) const;
+
     std::string to_string() const;
     // Multiline ASCII tree for terminal output and debugging; does not evaluate functions.
     std::string to_tree() const;

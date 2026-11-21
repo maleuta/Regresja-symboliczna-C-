@@ -59,6 +59,73 @@ double evaluate_tree(const Expression& expression, const FunctionRegistry& funct
     throw std::logic_error("Unknown expression kind");
 }
 
+void collect_constants(const Expression& expression, std::vector<double>& output) {
+    if (expression.kind() == Expression::Kind::constant) output.push_back(expression.value());
+    for (const auto& child : expression.children()) collect_constants(child, output);
+}
+
+void require_index(const Expression& expression, std::size_t index) {
+    if (index >= expression.size()) throw std::out_of_range("Expression node index out of range");
+}
+
+// Postfix program with operators and variables resolved once per tree, so that predicting
+// many rows does not repeat name lookups. Semantics match evaluate_tree exactly.
+struct Instruction {
+    Expression::Kind kind;
+    double value = 0;
+    std::size_t variable = 0;
+    const UnaryFunction* unary = nullptr;
+    const BinaryFunction* binary = nullptr;
+};
+
+void compile(const Expression& expression, const FunctionRegistry& functions,
+             std::span<const std::string> names, std::vector<Instruction>& program) {
+    for (const auto& child : expression.children()) compile(child, functions, names, program);
+    Instruction instruction{expression.kind()};
+    switch (expression.kind()) {
+    case Expression::Kind::constant:
+        instruction.value = expression.value();
+        break;
+    case Expression::Kind::variable: {
+        const auto found = std::find(names.begin(), names.end(), expression.name());
+        if (found == names.end()) throw std::invalid_argument("Unknown variable: " + expression.name());
+        instruction.variable = static_cast<std::size_t>(found - names.begin());
+        break;
+    }
+    case Expression::Kind::unary:
+        instruction.unary = &functions.unary(expression.name());
+        break;
+    case Expression::Kind::binary:
+        instruction.binary = &functions.binary(expression.name());
+        break;
+    }
+    program.push_back(instruction);
+}
+
+double run(std::span<const Instruction> program, std::span<const double> row, std::vector<double>& stack) {
+    stack.clear();
+    for (const auto& instruction : program) {
+        switch (instruction.kind) {
+        case Expression::Kind::constant:
+            stack.push_back(instruction.value);
+            break;
+        case Expression::Kind::variable:
+            stack.push_back(row[instruction.variable]);
+            break;
+        case Expression::Kind::unary:
+            stack.back() = finite((*instruction.unary)(stack.back()));
+            break;
+        case Expression::Kind::binary: {
+            const double right = stack.back();
+            stack.pop_back();
+            stack.back() = finite((*instruction.binary)(stack.back(), right));
+            break;
+        }
+        }
+    }
+    return stack.back();
+}
+
 void append_tree(std::ostream& output, const Expression& expression, const std::string& prefix,
                  bool root, bool last) {
     if (!root) output << prefix << (last ? "`-- " : "|-- ");
@@ -93,6 +160,14 @@ FunctionRegistry::FunctionRegistry() {
     add_binary("/", [](double a, double b) {
         if (b == 0) throw std::domain_error("Division by zero");
         return a / b;
+    });
+    // Power is defined only where the real result exists; see README for the exact domain.
+    add_binary("pow", [](double base, double exponent) {
+        if (base == 0 && exponent < 0) throw std::domain_error("Zero raised to a negative power");
+        if (base < 0 && std::trunc(exponent) != exponent) {
+            throw std::domain_error("Negative base raised to a non-integer power");
+        }
+        return std::pow(base, exponent);
     });
     add_unary("sin", [](double x) { return std::sin(x); });
     add_unary("cos", [](double x) { return std::cos(x); });
@@ -144,6 +219,61 @@ std::size_t Expression::depth() const {
     for (const auto& child : children_) child_depth = std::max(child_depth, child.depth());
     return 1 + child_depth;
 }
+const Expression& Expression::subtree(std::size_t index) const {
+    require_index(*this, index);
+    const Expression* node = this;
+    while (index != 0) {
+        --index;  // step from the current node into its first child
+        for (const auto& child : node->children_) {
+            const std::size_t child_size = child.size();
+            if (index < child_size) {
+                node = &child;
+                break;
+            }
+            index -= child_size;
+        }
+    }
+    return *node;
+}
+
+Expression Expression::replaced(std::size_t index, Expression replacement) const {
+    require_index(*this, index);
+    if (index == 0) return replacement;
+    Expression copy = *this;
+    std::size_t offset = 1;
+    for (auto& child : copy.children_) {
+        const std::size_t child_size = child.size();
+        if (index < offset + child_size) {
+            child = child.replaced(index - offset, std::move(replacement));
+            return copy;
+        }
+        offset += child_size;
+    }
+    throw std::logic_error("Preorder index was not found");
+}
+
+std::vector<double> Expression::constants() const {
+    std::vector<double> output;
+    collect_constants(*this, output);
+    return output;
+}
+
+Expression Expression::with_constants(std::span<const double> values) const {
+    std::size_t next = 0;
+    auto rebuild = [&](const auto& self, const Expression& node) -> Expression {
+        if (node.kind_ == Kind::constant) {
+            if (next == values.size()) throw std::invalid_argument("Too few constants for expression");
+            return constant(values[next++]);
+        }
+        Expression copy = node;
+        for (auto& child : copy.children_) child = self(self, child);
+        return copy;
+    };
+    Expression result = rebuild(rebuild, *this);
+    if (next != values.size()) throw std::invalid_argument("Too many constants for expression");
+    return result;
+}
+
 std::string Expression::to_string() const {
     if (kind_ == Kind::constant) {
         std::ostringstream output;
@@ -176,10 +306,14 @@ double evaluate(const Expression& expression, const FunctionRegistry& functions,
 
 std::vector<double> predict(const Expression& expression, const FunctionRegistry& functions,
                             const Dataset& dataset) {
-    dataset.validate();
+    dataset.validate();  // checks names, row widths and finiteness once for all rows
     std::vector<double> predictions;
     predictions.reserve(dataset.inputs.size());
-    for (const auto& row : dataset.inputs) predictions.push_back(evaluate(expression, functions, dataset.feature_names, row));
+    std::vector<Instruction> program;
+    compile(expression, functions, dataset.feature_names, program);
+    std::vector<double> stack;
+    stack.reserve(program.size());
+    for (const auto& row : dataset.inputs) predictions.push_back(run(program, row, stack));
     return predictions;
 }
 
