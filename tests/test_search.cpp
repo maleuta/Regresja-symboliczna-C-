@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -371,6 +372,42 @@ void search_tests() {
     check(text.find(",1,\"" + best.expression.to_string() + "\"\n") != std::string::npos, "Selected row is marked");
 }
 
+void observer_tests() {
+    const auto train = spring(64, 31);
+    sr::FunctionRegistry functions;
+    sr::SearchOptions options;
+    options.iterations = 6;
+    options.seed = 5;
+    const auto plain = sr::fit(train, options, functions);
+
+    std::vector<std::size_t> snapshot_iterations, snapshot_offspring;
+    std::size_t events = 0, crossovers = 0;
+    const sr::Variation variation(options, train.feature_names);
+    const std::set<std::string> operations{"perturb_constant", "change_operator", "replace_leaf", "replace_subtree",
+                                           "insert_node", "delete_node", "crossover", "parent_copy"};
+    options.observer.on_iteration = [&](const sr::IterationSnapshot& snapshot) {
+        snapshot_iterations.push_back(snapshot.iterations);
+        snapshot_offspring.push_back(snapshot.offspring);
+        check(snapshot.population.size() == options.population_size, "Snapshot holds the population");
+        check(!snapshot.front.empty(), "Snapshot holds the Pareto front");
+    };
+    options.observer.on_offspring = [&](const sr::OffspringEvent& event) {
+        check(event.cycle == events++, "Events are reported in order");
+        check(operations.contains(event.operation), "Known operation: " + event.operation);
+        check((event.operation == "crossover") == (event.second_parent != nullptr), "Second parent only for crossover");
+        crossovers += event.operation == "crossover";
+        check(event.replaced == event.cycle % options.population_size, "The oldest member is replaced");
+        check(variation.admissible(event.child.expression), "Reported child is admissible");
+    };
+    const auto observed = sr::fit(train, options, functions);
+    check(events == observed.statistics.offspring && crossovers > 0, "One event per offspring");
+    check(snapshot_iterations == std::vector<std::size_t>{0, 1, 2, 3, 4, 5, 6}, "Snapshots after init and each iteration");
+    check(snapshot_offspring.back() == observed.statistics.offspring, "Last snapshot is the final state");
+    check(observed.hall_of_fame.size() == plain.hall_of_fame.size() &&
+          observed.best.expression.to_string() == plain.best.expression.to_string() &&
+          observed.best.train_loss == plain.best.train_loss, "Observers do not change the search");
+}
+
 void constrained_search_tests() {
     const auto data = sr::generate_data(sr::physical_problems()[1], 64, 21);
     sr::FunctionRegistry functions;
@@ -450,6 +487,7 @@ int main() {
         variation_property_tests();
         constant_optimization_tests();
         search_tests();
+        observer_tests();
         constrained_search_tests();
         undefined_arithmetic_search_tests();
         custom_operator_search_tests();

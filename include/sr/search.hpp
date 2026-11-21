@@ -40,6 +40,46 @@ OptimizedExpression optimize_constants(const Expression& expression,
                                        const std::function<double(const Expression&)>& objective,
                                        const ConstantOptimizationOptions& options = {});
 
+// ---------------------------------------------------------------- candidates and observation
+
+struct Candidate {
+    Expression expression;
+    double train_loss;
+    std::optional<double> validation_loss;
+    std::size_t complexity() const { return expression.size(); }
+};
+
+// One evolution cycle, reported before the child replaces the oldest member.
+// References are valid only during the callback.
+struct OffspringEvent {
+    std::size_t iteration;           // 0-based iteration containing this cycle
+    std::size_t cycle;               // 0-based offspring counter over the whole run
+    std::string operation;           // mutation name, "crossover" or "parent_copy"
+    const Candidate& parent;
+    const Candidate* second_parent;  // crossover only
+    const Candidate& child;          // after the optional constant optimization
+    std::size_t inadmissible;        // proposals rejected by the constraints for this child
+    bool optimized;                  // constants of the child were optimized
+    std::size_t replaced;            // population index of the replaced (oldest) member
+};
+
+// State after initialization (iterations == 0) and after each completed iteration,
+// plus a final snapshot when a stopping rule ends an iteration early.
+struct IterationSnapshot {
+    std::size_t iterations;   // completed iterations
+    std::size_t offspring;    // offspring created so far
+    double seconds;
+    const std::vector<Candidate>& population;
+    std::vector<Candidate> front;  // current Pareto front (train loss)
+};
+
+// Optional hooks for tracing and visualization. They consume no random numbers, so a run
+// with observers gives the same result as a run without them.
+struct SearchObserver {
+    std::function<void(const OffspringEvent&)> on_offspring;
+    std::function<void(const IterationSnapshot&)> on_iteration;
+};
+
 // ---------------------------------------------------------------- search configuration
 
 // Relative frequencies of mutation kinds; kinds that cannot be applied to a tree are skipped.
@@ -80,6 +120,7 @@ struct SearchOptions {
     // <= max(min_loss * (1 + selection_tolerance), 1e-12 * loss of the simplest entry).
     // The second term treats round-off-level losses as equal. Validation loss is used when available.
     double selection_tolerance = 0.05;
+    SearchObserver observer;
 };
 
 // Throws std::invalid_argument describing the first inconsistent option.
@@ -96,6 +137,7 @@ public:
     struct Offspring {
         std::optional<Expression> expression;  // empty when every attempt was inadmissible
         std::size_t inadmissible = 0;          // rejected proposals
+        std::string operation;                 // mutation name or "crossover"; empty when none
     };
 
     Variation(const SearchOptions& options, std::vector<std::string> variables);
@@ -134,15 +176,9 @@ private:
 
 // ---------------------------------------------------------------- search result
 
-struct Candidate {
-    Expression expression;
-    double train_loss;
-    std::optional<double> validation_loss;
-    std::size_t complexity() const { return expression.size(); }
-};
-
 enum class StopReason { iterations, time_limit, target_loss };
 std::string to_string(StopReason reason);
+std::string to_string(Variation::Mutation mutation);
 
 struct SearchStatistics {
     std::size_t iterations = 0;          // completed iterations

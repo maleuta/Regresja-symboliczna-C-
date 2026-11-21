@@ -423,9 +423,11 @@ Variation::Offspring Variation::mutate(const Expression& parent, Random& random)
     if (std::accumulate(weights.begin(), weights.end(), 0.0) <= 0) return result;
     std::discrete_distribution<std::size_t> distribution(weights.begin(), weights.end());
     for (std::size_t attempt = 0; attempt < max_attempts_; ++attempt) {
-        Expression child = mutate_once(parent, mutations[distribution(random)], random);
+        const auto mutation = mutations[distribution(random)];
+        Expression child = mutate_once(parent, mutation, random);
         if (admissible(child)) {
             result.expression = std::move(child);
+            result.operation = to_string(mutation);
             return result;
         }
         ++result.inadmissible;
@@ -440,6 +442,7 @@ Variation::Offspring Variation::crossover(const Expression& first, const Express
         for (auto* child : {&left, &right}) {
             if (admissible(*child)) {
                 result.expression = std::move(*child);
+                result.operation = "crossover";
                 return result;
             }
             ++result.inadmissible;
@@ -464,7 +467,28 @@ std::string to_string(StopReason reason) {
     return "unknown";
 }
 
+std::string to_string(Variation::Mutation mutation) {
+    switch (mutation) {
+    case Variation::Mutation::perturb_constant: return "perturb_constant";
+    case Variation::Mutation::change_operator: return "change_operator";
+    case Variation::Mutation::replace_leaf: return "replace_leaf";
+    case Variation::Mutation::replace_subtree: return "replace_subtree";
+    case Variation::Mutation::insert_node: return "insert_node";
+    case Variation::Mutation::delete_node: return "delete_node";
+    }
+    return "unknown";
+}
+
 namespace {
+
+// Pareto front of the hall of fame: ascending complexity, strictly decreasing train loss.
+std::vector<Candidate> pareto_front(const std::map<std::size_t, std::pair<Candidate, bool>>& hall) {
+    std::vector<Candidate> front;
+    for (const auto& [complexity, entry] : hall) {
+        if (front.empty() || entry.first.train_loss < front.back().train_loss) front.push_back(entry.first);
+    }
+    return front;
+}
 
 SearchResult run_search(const Dataset& train, const Dataset* validation, const SearchOptions& options,
                         const FunctionRegistry& functions) {
@@ -541,6 +565,16 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
         return population[order[options.tournament_size - 1]];
     };
 
+    const auto& observer = options.observer;
+    std::optional<std::size_t> last_snapshot;  // offspring count of the previous snapshot
+    const auto snapshot = [&] {
+        if (observer.on_iteration && last_snapshot != statistics.offspring) {
+            last_snapshot = statistics.offspring;
+            observer.on_iteration({statistics.iterations, statistics.offspring, elapsed(), population, pareto_front(hall)});
+        }
+    };
+    snapshot();
+
     std::size_t oldest = 0;  // members are replaced in birth order, so this index is the oldest one
     bool stop = false;
     if (target_reached()) {
@@ -555,17 +589,29 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
                 break;
             }
             const Candidate& parent = tournament();
-            Variation::Offspring offspring = chance(random, options.crossover_probability)
-                ? variation.crossover(parent.expression, tournament().expression, random)
-                : variation.mutate(parent.expression, random);
+            const Candidate* second_parent = nullptr;
+            Variation::Offspring offspring;
+            if (chance(random, options.crossover_probability)) {
+                second_parent = &tournament();
+                offspring = variation.crossover(parent.expression, second_parent->expression, random);
+            } else {
+                offspring = variation.mutate(parent.expression, random);
+            }
             statistics.inadmissible_proposals += offspring.inadmissible;
             Candidate child = offspring.expression ? evaluated(std::move(*offspring.expression)) : parent;
             if (!offspring.expression) ++statistics.rejected_offspring;
+            bool optimized_child = false;
             if (chance(random, options.optimize_probability) && !child.expression.constants().empty()) {
+                optimized_child = true;
                 auto optimized = optimize_constants(child.expression, objective, options.optimization);
                 if (optimized.loss < child.train_loss) child = {std::move(optimized.expression), optimized.loss, std::nullopt};
             }
             record(child);
+            if (observer.on_offspring) {
+                observer.on_offspring({iteration, statistics.offspring,
+                                       offspring.expression ? offspring.operation : std::string("parent_copy"),
+                                       parent, second_parent, child, offspring.inadmissible, optimized_child, oldest});
+            }
             population[oldest] = std::move(child);
             oldest = (oldest + 1) % population.size();
             ++statistics.offspring;
@@ -575,7 +621,10 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
                 break;
             }
         }
-        if (stop) break;
+        if (stop) {
+            snapshot();
+            break;
+        }
         // Constants of hall-of-fame entries are refined at the end of each iteration until
         // a refinement no longer improves the loss; a replaced entry is refined again.
         for (auto& [complexity, entry] : hall) {
@@ -589,16 +638,14 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
             entry.second = !improved;
         }
         ++statistics.iterations;
+        snapshot();
         if (target_reached()) {
             stop = true;
             statistics.stop_reason = StopReason::target_loss;
         }
     }
 
-    std::vector<Candidate> front;
-    for (const auto& [complexity, entry] : hall) {
-        if (front.empty() || entry.first.train_loss < front.back().train_loss) front.push_back(entry.first);
-    }
+    std::vector<Candidate> front = pareto_front(hall);
     if (front.empty()) throw std::runtime_error("Search found no candidate with a finite loss");
     if (validation) {
         for (auto& candidate : front) {

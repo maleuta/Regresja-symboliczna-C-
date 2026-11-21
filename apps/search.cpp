@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <stdexcept>
@@ -37,7 +38,9 @@ constexpr const char* usage =
     "  --win-probability P   probability that the best contestant wins (default 0.7)\n"
     "  --crossover P         crossover probability (default 0.2)\n"
     "  --optimize P          probability of optimizing constants of an offspring (default 0.05)\n"
-    "  --output DIR          write hall_of_fame.csv and result.json\n";
+    "  --output DIR          write hall_of_fame.csv, progress.csv and result.json\n"
+    "  --trace FILE          write a JSON trace of the run for the visualizer\n"
+    "  --label TEXT          name of the run stored in the trace\n";
 
 std::size_t to_size(std::string_view text) {
     std::size_t value = 0;
@@ -89,6 +92,21 @@ std::string json_string(const std::string& text) {
     return output + '"';
 }
 
+// Compact record of the search used by progress.csv and the JSON trace.
+struct SnapshotRecord {
+    std::size_t iterations, offspring;
+    double seconds;
+    std::vector<std::pair<std::size_t, double>> population;  // complexity, train loss
+    std::vector<sr::Candidate> front;
+};
+
+struct EventRecord {
+    std::size_t cycle, iteration, inadmissible, replaced;
+    std::string operation, parent, second, child;
+    double parent_loss, child_loss;
+    bool optimized, new_best;
+};
+
 std::string join(const std::vector<std::string>& items) {
     std::string output;
     for (const auto& item : items) output += (output.empty() ? "" : ",") + item;
@@ -102,6 +120,8 @@ int main(int argc, char** argv) {
         sr::SearchOptions options;
         std::vector<std::filesystem::path> files;
         std::optional<std::filesystem::path> output;
+        std::optional<std::filesystem::path> trace_path;
+        std::string label = "sr_search";
         for (int i = 1; i < argc; ++i) {
             const std::string argument = argv[i];
             const auto value = [&]() -> std::string {
@@ -154,6 +174,10 @@ int main(int argc, char** argv) {
                 options.crossover_probability = to_double(value());
             } else if (argument == "--optimize") {
                 options.optimize_probability = to_double(value());
+            } else if (argument == "--trace") {
+                trace_path = value();
+            } else if (argument == "--label") {
+                label = value();
             } else if (argument == "--output") {
                 output = value();
             } else if (argument.starts_with("--")) {
@@ -174,6 +198,35 @@ int main(int argc, char** argv) {
         } else {
             for (const auto& file : files) data.push_back(sr::read_csv(file));
             std::cout << "Data: " << files.size() << " CSV file(s), train = " << files[0].string() << '\n';
+        }
+
+        // Observers only record; they do not change the run (same seed -> same result).
+        std::vector<SnapshotRecord> snapshots;
+        std::vector<EventRecord> events;
+        double best_so_far = std::numeric_limits<double>::infinity();
+        if (output || trace_path) {
+            options.observer.on_iteration = [&](const sr::IterationSnapshot& snapshot) {
+                SnapshotRecord record{snapshot.iterations, snapshot.offspring, snapshot.seconds, {}, snapshot.front};
+                for (const auto& member : snapshot.population) {
+                    record.population.emplace_back(member.complexity(), member.train_loss);
+                }
+                if (!snapshot.front.empty()) best_so_far = std::min(best_so_far, snapshot.front.back().train_loss);
+                snapshots.push_back(std::move(record));
+            };
+        }
+        if (trace_path) {
+            // Keep the first cycles (to show the mechanics) and every cycle that improved the best loss.
+            options.observer.on_offspring = [&](const sr::OffspringEvent& event) {
+                const bool new_best = event.child.train_loss < best_so_far;
+                if (new_best) best_so_far = event.child.train_loss;
+                if (event.cycle >= 60 && !new_best) return;
+                if (events.size() >= 400) return;
+                events.push_back({event.cycle, event.iteration, event.inadmissible, event.replaced, event.operation,
+                                  event.parent.expression.to_string(),
+                                  event.second_parent ? event.second_parent->expression.to_string() : std::string{},
+                                  event.child.expression.to_string(), event.parent.train_loss, event.child.train_loss,
+                                  event.optimized, new_best});
+            };
         }
 
         sr::FunctionRegistry functions;
@@ -227,8 +280,88 @@ int main(int argc, char** argv) {
                  << ",\n  \"train_loss\": " << json_number(best.train_loss)
                  << ",\n  \"validation_loss\": " << (best.validation_loss ? json_number(*best.validation_loss) : "null")
                  << ",\n  \"test_loss\": " << (test_loss ? json_number(*test_loss) : "null") << "\n}\n";
-            if (!hall || !json) throw std::runtime_error("Cannot write results to " + output->string());
-            std::cout << "Saved hall_of_fame.csv and result.json in " << output->string() << '\n';
+            std::ofstream progress(*output / "progress.csv");
+            progress.imbue(std::locale::classic());
+            progress << std::setprecision(17) << "iterations,offspring,seconds,best_train_loss,front_size\n";
+            for (const auto& snapshot : snapshots) {
+                progress << snapshot.iterations << ',' << snapshot.offspring << ',' << snapshot.seconds << ','
+                         << (snapshot.front.empty() ? "" : json_number(snapshot.front.back().train_loss)) << ','
+                         << snapshot.front.size() << '\n';
+            }
+            if (!hall || !json || !progress) throw std::runtime_error("Cannot write results to " + output->string());
+            std::cout << "Saved hall_of_fame.csv, progress.csv and result.json in " << output->string() << '\n';
+        }
+
+        if (trace_path) {
+            if (trace_path->has_parent_path()) std::filesystem::create_directories(trace_path->parent_path());
+            std::ofstream trace(*trace_path);
+            trace.imbue(std::locale::classic());
+            const auto strings = [](const std::vector<std::string>& items) {
+                std::string text = "[";
+                for (std::size_t i = 0; i < items.size(); ++i) text += (i ? "," : "") + json_string(items[i]);
+                return text + "]";
+            };
+            const auto candidates = [](const std::vector<sr::Candidate>& front) {
+                std::string text = "[";
+                for (std::size_t i = 0; i < front.size(); ++i) {
+                    text += std::string(i ? "," : "") + "{\"c\":" + std::to_string(front[i].complexity()) +
+                            ",\"loss\":" + json_number(front[i].train_loss) +
+                            (front[i].validation_loss ? ",\"val\":" + json_number(*front[i].validation_loss) : "") +
+                            ",\"expr\":" + json_string(front[i].expression.to_string()) + "}";
+                }
+                return text + "]";
+            };
+            const auto& train = data[0];
+            trace << "{\"label\":" << json_string(label) << ",\"features\":" << strings(train.feature_names)
+                  << ",\"target\":" << json_string(train.target_name) << ",\"rows\":[";
+            const std::size_t stride = std::max<std::size_t>(1, train.inputs.size() / 200);
+            for (std::size_t row = 0, written = 0; row < train.inputs.size(); row += stride, ++written) {
+                trace << (written ? "," : "") << '[';
+                for (const double x : train.inputs[row]) trace << json_number(x) << ',';
+                trace << json_number(train.targets[row]) << ']';
+            }
+            trace << "],\"options\":{\"seed\":" << options.seed << ",\"population_size\":" << options.population_size
+                  << ",\"iterations\":" << options.iterations << ",\"tournament_size\":" << options.tournament_size
+                  << ",\"tournament_win_probability\":" << json_number(options.tournament_win_probability)
+                  << ",\"crossover_probability\":" << json_number(options.crossover_probability)
+                  << ",\"unary\":" << strings(options.unary_operators)
+                  << ",\"binary\":" << strings(options.binary_operators) << ",\"loss\":" << json_string(options.loss)
+                  << ",\"max_size\":" << options.constraints.max_size
+                  << ",\"max_depth\":" << options.constraints.max_depth << "},\"snapshots\":[";
+            for (std::size_t i = 0; i < snapshots.size(); ++i) {
+                const auto& snapshot = snapshots[i];
+                trace << (i ? "," : "") << "{\"iterations\":" << snapshot.iterations << ",\"offspring\":"
+                      << snapshot.offspring << ",\"seconds\":" << json_number(snapshot.seconds)
+                      << ",\"front\":" << candidates(snapshot.front) << ",\"population\":[";
+                for (std::size_t j = 0; j < snapshot.population.size(); ++j) {
+                    trace << (j ? "," : "") << '[' << snapshot.population[j].first << ','
+                          << json_number(snapshot.population[j].second) << ']';
+                }
+                trace << "]}";
+            }
+            trace << "],\"events\":[";
+            for (std::size_t i = 0; i < events.size(); ++i) {
+                const auto& event = events[i];
+                trace << (i ? "," : "") << "{\"cycle\":" << event.cycle << ",\"iteration\":" << event.iteration
+                      << ",\"op\":" << json_string(event.operation) << ",\"parent\":" << json_string(event.parent)
+                      << ",\"parent_loss\":" << json_number(event.parent_loss)
+                      << ",\"second\":" << json_string(event.second) << ",\"child\":" << json_string(event.child)
+                      << ",\"child_loss\":" << json_number(event.child_loss)
+                      << ",\"inadmissible\":" << event.inadmissible << ",\"optimized\":"
+                      << (event.optimized ? "true" : "false") << ",\"replaced\":" << event.replaced
+                      << ",\"new_best\":" << (event.new_best ? "true" : "false") << '}';
+            }
+            trace << "],\"result\":{\"equation\":" << json_string(best.expression.to_string())
+                  << ",\"complexity\":" << best.complexity() << ",\"train_loss\":" << json_number(best.train_loss)
+                  << ",\"validation_loss\":" << (best.validation_loss ? json_number(*best.validation_loss) : "null")
+                  << ",\"test_loss\":" << (test_loss ? json_number(*test_loss) : "null")
+                  << ",\"stop_reason\":" << json_string(sr::to_string(stats.stop_reason))
+                  << ",\"seconds\":" << json_number(stats.seconds) << ",\"offspring\":" << stats.offspring
+                  << ",\"inadmissible\":" << stats.inadmissible_proposals
+                  << ",\"failed\":" << stats.failed_evaluations << ",\"front\":" << candidates(result.hall_of_fame)
+                  << "}}\n";
+            if (!trace) throw std::runtime_error("Cannot write trace " + trace_path->string());
+            std::cout << "Saved trace " << trace_path->string() << '\n';
         }
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
