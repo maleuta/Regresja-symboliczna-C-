@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wizualizacja wyszukiwania</title>
+<!-- Offline viewer of real sr_search runs. Data: traces.js (presentation/make_traces.sh). -->
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f3f0;
+  --surface-1: #fcfcfb;
+  --surface-2: #efeeea;
+  --border: #dcdad3;
+  --grid: #e6e4de;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7973;
+  --series-1: #2a78d6;
+  --series-1-wash: rgba(42, 120, 214, 0.12);
+  --series-2: #eb6834;
+  --series-2-wash: rgba(235, 104, 52, 0.14);
+  --neutral-mark: #a9a79f;
+  --active: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --surface-2: #262624; --border: #3a3a37; --grid: #2f2f2c;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #94938a;
+    --series-1: #3987e5; --series-1-wash: rgba(57, 135, 229, 0.18);
+    --series-2: #d95926; --series-2-wash: rgba(217, 89, 38, 0.2);
+    --neutral-mark: #6f6e68; --active: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211; --surface-1: #1a1a19; --surface-2: #262624; --border: #3a3a37; --grid: #2f2f2c;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #94938a;
+  --series-1: #3987e5; --series-1-wash: rgba(57, 135, 229, 0.18);
+  --series-2: #d95926; --series-2-wash: rgba(217, 89, 38, 0.2);
+  --neutral-mark: #6f6e68; --active: #3987e5;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; margin-bottom: 16px; }
+h1 { font-size: 24px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+h2 { font-size: 19px; margin: 0 0 4px; font-weight: 650; }
+.lede { color: var(--text-secondary); margin: 2px 0 0; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
+.card > p.hint { color: var(--text-secondary); margin: 0 0 12px; font-size: 15px; }
+label.select { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-secondary); }
+select, button {
+  font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+select { min-width: min(560px, 100%); max-width: 100%; }
+button:hover, select:hover { border-color: var(--text-muted); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--active); outline-offset: 2px; }
+button.primary { background: var(--active); color: #fff; border-color: var(--active); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.controls .status { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.checkbox { display: inline-flex; gap: 6px; align-items: center; color: var(--text-secondary); cursor: pointer; }
+input[type="range"] { flex: 1 1 280px; accent-color: var(--active); }
+
+/* cycle steps */
+.steps { list-style: none; margin: 12px 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.steps li {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface-1);
+  font-size: 14px; color: var(--text-secondary); transition: background .2s, border-color .2s, color .2s;
+}
+.steps li b { display: block; color: var(--text-primary); font-size: 15px; }
+.steps li.on { border-color: var(--active); background: var(--series-1-wash); color: var(--text-primary); }
+.steps li.skip { opacity: .45; }
+.event-line { min-height: 1.5em; margin: 4px 0 8px; }
+.trees { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.tree-box { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--surface-1); transition: opacity .3s; }
+.tree-box.hidden { opacity: .15; }
+.tree-box h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.tree-box .loss { color: var(--text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; }
+.tree-box svg { width: 100%; height: auto; display: block; margin-top: 6px; }
+.formula { font-family: "STIX Two Math", "Cambria Math", Georgia, serif; font-size: 17px; overflow-wrap: anywhere; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--text-secondary); margin-top: 8px; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.swatch.line { width: 16px; height: 2px; border-radius: 1px; }
+.swatch.box { border-radius: 3px; border: 1px solid var(--text-muted); }
+
+/* run charts */
+.charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.chart { position: relative; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--surface-1); }
+.chart h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.chart .sub { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.chart svg { width: 100%; height: auto; display: block; margin-top: 6px; overflow: visible; }
+.axis text, .tick text { fill: var(--text-muted); font-size: 12px; }
+.axis-title { fill: var(--text-secondary); font-size: 12px; }
+.tooltip {
+  position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  max-width: 320px; display: none; z-index: 2; color: var(--text-primary);
+}
+.best { margin-top: 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: baseline; }
+.best dt { color: var(--text-secondary); font-size: 14px; }
+.best dd { margin: 0; }
+
+/* result */
+table { width: 100%; border-collapse: collapse; font-size: 15px; margin-top: 8px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 600; font-size: 13px; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.selected td { background: var(--series-2-wash); }
+.tag { display: inline-block; font-size: 12px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--series-2); color: var(--text-primary); margin-left: 6px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
+.stat { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.stat .label { font-size: 13px; color: var(--text-secondary); }
+.stat .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+footer { color: var(--text-muted); font-size: 13px; margin-top: 16px; }
+kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 12px; }
+@media (max-width: 900px) {
+  .charts { grid-template-columns: 1fr; }
+  .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Regresja symboliczna w C++23 — jak działa wyszukiwanie</h1>
+      <p class="lede">Zapis rzeczywistych uruchomień programu <code>sr_search</code>, odtworzony krok po kroku.</p>
+    </div>
+    <label class="select">Uruchomienie
+      <select id="run-select"></select>
+    </label>
+  </header>
+
+  <section class="card" aria-labelledby="cycle-title">
+    <h2 id="cycle-title">1. Jeden cykl ewolucji</h2>
+    <p class="hint">Każdy cykl tworzy jednego potomka. Pierwsze 60 cykli pokazuje mechanikę, dalej zapisane są cykle, które poprawiły najlepszy wynik.</p>
+    <div class="controls">
+      <button id="ev-prev" type="button" aria-label="Poprzedni cykl">◀ Poprzedni</button>
+      <button id="ev-next" class="primary" type="button" aria-label="Następny cykl">Następny ▶</button>
+      <label class="checkbox"><input type="checkbox" id="ev-records"> tylko nowe rekordy</label>
+      <span class="status" id="ev-counter"></span>
+    </div>
+    <ol class="steps" id="steps">
+      <li data-step="0"><b>1. Turniej</b>8 losowych osobników, wygrywa zwykle najlepszy</li>
+      <li data-step="1"><b>2. Wariacja</b>mutacja albo krzyżowanie</li>
+      <li data-step="2"><b>3. Ograniczenia</b>niedopuszczalne propozycje są odrzucane</li>
+      <li data-step="3"><b>4. Ocena</b>strata na danych treningowych</li>
+      <li data-step="4"><b>5. Stałe</b>przeszukiwanie współrzędnych (5% potomków)</li>
+      <li data-step="5"><b>6. Zastąpienie</b>potomek zastępuje najstarszego; hall of fame</li>
+    </ol>
+    <div class="event-line" id="ev-line" aria-live="polite"></div>
+    <div class="trees">
+      <div class="tree-box" id="box-parent"><h3>Rodzic</h3><div class="loss" id="parent-loss"></div><div class="formula" id="parent-formula"></div><svg id="parent-tree" role="img" aria-label="Drzewo rodzica"></svg></div>
+      <div class="tree-box" id="box-second"><h3>Drugi rodzic (krzyżowanie)</h3><div class="formula" id="second-formula"></div><svg id="second-tree" role="img" aria-label="Drzewo drugiego rodzica"></svg></div>
+      <div class="tree-box" id="box-child"><h3>Potomek</h3><div class="loss" id="child-loss"></div><div class="formula" id="child-formula"></div><svg id="child-tree" role="img" aria-label="Drzewo potomka"></svg></div>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span class="key"><span class="swatch box" style="background:var(--surface-2)"></span>operator</span>
+      <span class="key"><span class="swatch box" style="background:var(--series-1-wash)"></span>zmienna</span>
+      <span class="key"><span class="swatch box" style="background:var(--series-2-wash)"></span>stała</span>
+      <span>Klawisze: <kbd>←</kbd> <kbd>→</kbd> cykle, <kbd>spacja</kbd> odtwarzanie przebiegu</span>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="run-title">
+    <h2 id="run-title">2. Przebieg wyszukiwania</h2>
+    <p class="hint">Stan po każdej iteracji: najlepsza strata, front Pareta (najlepszy wzór dla każdej złożoności) i dopasowanie najlepszego wzoru do danych.</p>
+    <div class="controls">
+      <button id="play" class="primary" type="button">▶ Odtwórz</button>
+      <input type="range" id="slider" min="0" max="0" value="0" aria-label="Iteracja">
+      <span class="status" id="snap-status"></span>
+    </div>
+    <div class="charts">
+      <div class="chart" id="chart-loss"><h3>Najlepsza strata treningowa</h3><p class="sub">skala logarytmiczna, w funkcji liczby potomków</p><svg viewBox="0 0 440 300" role="img" aria-label="Wykres najlepszej straty"></svg><div class="tooltip"></div></div>
+      <div class="chart" id="chart-front"><h3>Front Pareta i populacja</h3><p class="sub">strata względem złożoności (liczby węzłów)</p><svg viewBox="0 0 440 300" role="img" aria-label="Front Pareta"></svg><div class="tooltip"></div>
+        <div class="legend"><span class="key"><span class="swatch" style="background:var(--neutral-mark)"></span>populacja</span><span class="key"><span class="swatch" style="background:var(--series-1)"></span>front Pareta</span></div></div>
+      <div class="chart" id="chart-fit"><h3 id="fit-title">Dopasowanie do danych</h3><p class="sub" id="fit-sub"></p><svg viewBox="0 0 440 300" role="img" aria-label="Dopasowanie wzoru do danych"></svg><div class="tooltip"></div>
+        <div class="legend" id="fit-legend"></div></div>
+    </div>
+    <dl class="best">
+      <dt>Najmniejsza strata treningowa</dt><dd class="formula" id="snap-formula"></dd>
+      <dt>Złożoność, strata</dt><dd id="snap-meta"></dd>
+    </dl>
+  </section>
+
+  <section class="card" aria-labelledby="result-title">
+    <h2 id="result-title">3. Wynik</h2>
+    <p class="hint">Końcowy front Pareta. Model wybierany jest na danych walidacyjnych: najprostszy wzór o stracie co najwyżej 5% większej od minimalnej.</p>
+    <div class="stats" id="stats"></div>
+    <table>
+      <thead><tr><th>Złożoność</th><th>Strata (trening)</th><th>Strata (walidacja)</th><th>Wzór</th></tr></thead>
+      <tbody id="front-table"></tbody>
+    </table>
+  </section>
+  <footer>Dane: <code>presentation/traces.js</code>, generowane przez <code>presentation/make_traces.sh</code> z uruchomień <code>sr_search --trace</code>. Strata: MSE.</footer>
+</main>
+
+<script src="traces.js"></script>
+<script>
+"use strict";
+const TRACES = window.SR_TRACES || [];
+const $ = (id) => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+
+// ------------------------------------------------------------------ formulas
+// Parses Expression::to_string output, e.g. "+(*(2.5, x), 0.75)".
+function parse(text) {
+  let i = 0;
+  const skip = () => { while (text[i] === " ") i++; };
+  function node() {
+    skip();
+    const start = i;
+    while (i < text.length && !"(),".includes(text[i])) i++;
+    const token = text.slice(start, i).trim();
+    if (text[i] === "(") {
+      i++;
+      const children = [node()];
+      skip();
+      while (text[i] === ",") { i++; children.push(node()); skip(); }
+      i++;
+      return { kind: children.length === 1 ? "unary" : "binary", name: token, children };
+    }
+    const value = Number(token);
+    if (token !== "" && !Number.isNaN(value)) return { kind: "constant", value };
+    return { kind: "variable", name: token };
+  }
+  return node();
+}
+
+const OPS = {
+  "+": (a, b) => a + b, "-": (a, b) => a - b, "*": (a, b) => a * b,
+  "/": (a, b) => (b === 0 ? NaN : a / b),
+  pow: (a, b) => (a < 0 && Math.trunc(b) !== b) || (a === 0 && b < 0) ? NaN : Math.pow(a, b),
+  hypot: (a, b) => Math.hypot(a, b),
+  sin: Math.sin, cos: Math.cos, exp: Math.exp, square: (x) => x * x,
+};
+function evaluate(n, env) {
+  if (n.kind === "constant") return n.value;
+  if (n.kind === "variable") return env[n.name];
+  const f = OPS[n.name];
+  if (!f) return NaN;
+  return n.kind === "unary" ? f(evaluate(n.children[0], env)) : f(evaluate(n.children[0], env), evaluate(n.children[1], env));
+}
+
+const SUP = { "-": "⁻", "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹" };
+const pl = (s) => s.replace(".", ",");
+function fmtConst(v, digits = 4) {
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  if (a >= 1e-3 && a < 1e5) return pl(String(Number(v.toPrecision(digits))));
+  const [m, e] = v.toExponential(digits - 1).split("e");
+  return pl(String(Number(m))) + "·10" + String(Number(e)).split("").map((c) => SUP[c] || c).join("");
+}
+function fmtLoss(v) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "∞";
+  if (v === 0) return "0";
+  return fmtConst(v, 3);
+}
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const varHtml = (name) => { const m = /^([A-Za-z]+)(\d+)$/.exec(name); return m ? `<i>${esc(m[1])}</i><sub>${m[2]}</sub>` : `<i>${esc(name)}</i>`; };
+const PREC = { "+": 1, "-": 1, "*": 2, "/": 2 };
+
+// Infix HTML with minimal parentheses; constants with 4 significant digits.
+function infix(n, parent = 0) {
+  if (n.kind === "constant") { const s = fmtConst(n.value); return n.value < 0 && parent > 0 ? `(${s})` : s; }
+  if (n.kind === "variable") return varHtml(n.name);
+  const [a, b] = n.children;
+  if (n.kind === "unary") {
+    if (n.name === "square") return atomic(a) ? `${infix(a, 3)}²` : `(${infix(a)})²`;
+    return `${esc(n.name)}(${infix(a)})`;
+  }
+  if (n.name === "pow") return `${atomic(a) ? infix(a, 3) : "(" + infix(a) + ")"}<sup>${infix(b)}</sup>`;
+  if (!(n.name in PREC)) return `${esc(n.name)}(${infix(a)}; ${infix(b)})`;
+  const p = PREC[n.name];
+  let s;
+  if ((n.name === "+" || n.name === "-") && b.kind === "constant" && b.value < 0) {
+    s = `${infix(a, p)} ${n.name === "+" ? "−" : "+"} ${fmtConst(-b.value)}`;
+  } else {
+    const right = infix(b, n.name === "-" || n.name === "/" ? p + 0.5 : p);
+    s = infix(a, p) + { "+": " + ", "-": " − ", "*": "·", "/": " / " }[n.name] + right;
+  }
+  return p < parent ? `(${s})` : s;
+}
+const atomic = (n) => n.kind === "constant" && n.value >= 0 || n.kind === "variable";
+const formulaHtml = (text) => (text ? infix(parse(text)) : "");
+
+// ------------------------------------------------------------------ tree drawing
+const SYMBOL = { "+": "+", "-": "−", "*": "×", "/": "÷", pow: "^", square: "( )²" };
+function drawTree(svg, text) {
+  svg.replaceChildren();
+  if (!text) { svg.setAttribute("viewBox", "0 0 10 10"); return; }
+  const root = parse(text);
+  let leaf = 0, depth = 0;
+  (function place(n, d) {
+    n.d = d; depth = Math.max(depth, d);
+    if (!n.children) { n.x = leaf++; return; }
+    n.children.forEach((c) => place(c, d + 1));
+    n.x = (n.children[0].x + n.children[n.children.length - 1].x) / 2;
+  })(root, 0);
+  const dx = 58, dy = 54, pad = 30;
+  const w = Math.max(1, leaf - 1) * dx + pad * 2, h = depth * dy + pad * 2;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.style.maxHeight = `${Math.min(340, h * 1.3)}px`;
+  const X = (n) => pad + n.x * dx + (leaf === 1 ? (w - pad * 2) / 2 : 0), Y = (n) => pad + n.d * dy;
+  const edges = el("g", {}, svg), nodes = el("g", {}, svg);
+  (function draw(n) {
+    for (const c of n.children || []) {
+      el("line", { x1: X(n), y1: Y(n), x2: X(c), y2: Y(c), stroke: "var(--text-muted)", "stroke-width": 1.5 }, edges);
+      draw(c);
+    }
+    const label = n.kind === "constant" ? fmtConst(n.value, 3) : n.kind === "variable" ? n.name : SYMBOL[n.name] || n.name;
+    const width = Math.max(30, label.length * 8 + 14);
+    const fill = n.kind === "constant" ? "var(--series-2-wash)" : n.kind === "variable" ? "var(--series-1-wash)" : "var(--surface-2)";
+    const g = el("g", {}, nodes);
+    if (n.kind === "unary" || n.kind === "binary") {
+      el("rect", { x: X(n) - width / 2, y: Y(n) - 15, width, height: 30, rx: 15, fill, stroke: "var(--text-muted)" }, g);
+    } else {
+      el("rect", { x: X(n) - width / 2, y: Y(n) - 14, width, height: 28, rx: 5, fill, stroke: "var(--border)" }, g);
+    }
+    const t = el("text", { x: X(n), y: Y(n) + 5, "text-anchor": "middle", fill: "var(--text-primary)", "font-size": 14,
+      "font-style": n.kind === "variable" ? "italic" : "normal" }, g);
+    t.textContent = label;
+  })(root);
+}
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+// ------------------------------------------------------------------ chart helpers
+const FLOOR = 1e-32;  // zero losses (exact fits) are drawn at this floor
+const W = 440, H = 300, M = { l: 54, r: 14, t: 12, b: 40 };
+function logScale(values) {
+  const finite = values.filter((v) => v !== null && Number.isFinite(v)).map((v) => Math.max(v, FLOOR));
+  let lo = Math.floor(Math.log10(Math.min(...finite))), hi = Math.ceil(Math.log10(Math.max(...finite)));
+  if (hi === lo) hi = lo + 1;
+  return { lo, hi, y: (v) => M.t + (H - M.t - M.b) * (1 - (Math.log10(Math.max(v, FLOOR)) - lo) / (hi - lo)) };
+}
+const supExp = (e) => "10" + String(e).split("").map((c) => SUP[c] || c).join("");
+function axes(svg, { xTicks, xLabel, x, yTicks, y, yLabel, yFormat }) {
+  const g = el("g", { class: "axis" }, svg);
+  for (const v of yTicks) {
+    el("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }, g);
+    const t = el("text", { x: M.l - 6, y: y(v) + 4, "text-anchor": "end" }, g); t.textContent = yFormat(v);
+  }
+  el("line", { x1: M.l, x2: W - M.r, y1: H - M.b, y2: H - M.b, stroke: "var(--text-muted)", "stroke-width": 1 }, g);
+  for (const v of xTicks) {
+    const t = el("text", { x: x(v), y: H - M.b + 16, "text-anchor": "middle" }, g); t.textContent = typeof v === "number" ? pl(String(v)) : v;
+  }
+  const xt = el("text", { x: (M.l + W - M.r) / 2, y: H - 6, "text-anchor": "middle", class: "axis-title" }, g); xt.textContent = xLabel;
+  const yt = el("text", { x: 12, y: (M.t + H - M.b) / 2, "text-anchor": "middle", class: "axis-title", transform: `rotate(-90 12 ${(M.t + H - M.b) / 2})` }, g);
+  yt.textContent = yLabel;
+}
+function logTicks(scale) {
+  const step = Math.max(1, Math.ceil((scale.hi - scale.lo) / 6));
+  const ticks = [];
+  for (let e = scale.hi; e >= scale.lo; e -= step) ticks.push(Math.pow(10, e));
+  return ticks;
+}
+function niceTicks(lo, hi, count = 5) {
+  const span = hi - lo || 1, step0 = span / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+  const ticks = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) ticks.push(Number(v.toPrecision(10)));
+  return ticks;
+}
+const lin = (lo, hi, a, b) => (v) => a + ((v - lo) / (hi - lo || 1)) * (b - a);
+function svgPoint(svg, event) {
+  const p = svg.createSVGPoint(); p.x = event.clientX; p.y = event.clientY;
+  return p.matrixTransform(svg.getScreenCTM().inverse());
+}
+function showTip(chart, svg, html, vx, vy) {
+  const tip = chart.querySelector(".tooltip");
+  if (!html) { tip.style.display = "none"; return; }
+  tip.innerHTML = html; tip.style.display = "block";
+  const box = svg.getBoundingClientRect(), host = chart.getBoundingClientRect();
+  const px = box.left - host.left + (vx / W) * box.width, py = box.top - host.top + (vy / H) * box.height;
+  const left = Math.min(px + 12, host.width - tip.offsetWidth - 4);
+  tip.style.left = `${Math.max(4, left)}px`;
+  tip.style.top = `${Math.max(4, py - tip.offsetHeight - 10)}px`;
+}
+
+// ------------------------------------------------------------------ state
+let trace = null, snapIndex = 0, eventIndex = 0, playing = null, stepTimers = [];
+const OP_NAMES = {
+  perturb_constant: "mutacja: zmiana stałej", change_operator: "mutacja: zmiana operatora",
+  replace_leaf: "mutacja: zamiana liścia", replace_subtree: "mutacja: nowe poddrzewo",
+  insert_node: "mutacja: wstawienie węzła", delete_node: "mutacja: usunięcie węzła",
+  crossover: "krzyżowanie (wymiana poddrzew)", parent_copy: "brak dopuszczalnej propozycji — kopia rodzica",
+};
+const bestOf = (snap) => snap.front[snap.front.length - 1];
+const visibleEvents = () => (trace ? trace.events.filter((e) => !$("ev-records").checked || e.new_best) : []);
+
+function loadRun(index) {
+  stopPlaying();
+  trace = TRACES[index];
+  $("slider").max = trace.snapshots.length - 1;
+  snapIndex = trace.snapshots.length - 1;
+  $("slider").value = snapIndex;
+  // Start at the first cycle whose parent is a real formula (not a single leaf).
+  eventIndex = Math.max(0, visibleEvents().findIndex((e) => e.parent.includes("(") && e.child.includes("(")));
+  renderEvent(false);
+  renderSnapshot();
+  renderResult();
+}
+
+// ------------------------------------------------------------------ section 1: one cycle
+function renderEvent(animate) {
+  stepTimers.forEach(clearTimeout); stepTimers = [];
+  const events = visibleEvents();
+  if (!events.length) return;
+  eventIndex = Math.max(0, Math.min(eventIndex, events.length - 1));
+  const e = events[eventIndex];
+  $("ev-counter").textContent = `cykl ${e.cycle + 1} (iteracja ${e.iteration + 1}) · ${eventIndex + 1} z ${events.length}`;
+  const parts = [`<b>${OP_NAMES[e.op] || e.op}</b>`];
+  if (e.inadmissible) parts.push(`odrzucone propozycje: ${e.inadmissible}`);
+  if (e.optimized) parts.push("stałe zoptymalizowane");
+  parts.push(`zastąpiony osobnik nr ${e.replaced + 1}`);
+  if (e.new_best) parts.push("<b>nowy najlepszy wynik</b>");
+  $("ev-line").innerHTML = parts.join(" · ");
+  drawTree($("parent-tree"), e.parent);
+  $("parent-formula").innerHTML = formulaHtml(e.parent);
+  $("parent-loss").textContent = `strata ${fmtLoss(e.parent_loss)}`;
+  $("box-second").style.display = e.second ? "" : "none";
+  drawTree($("second-tree"), e.second);
+  $("second-formula").innerHTML = formulaHtml(e.second);
+  drawTree($("child-tree"), e.child);
+  $("child-formula").innerHTML = formulaHtml(e.child);
+  $("child-loss").textContent = `strata ${fmtLoss(e.child_loss)}`;
+
+  const steps = [...document.querySelectorAll("#steps li")];
+  const skipped = (i) => (i === 4 && !e.optimized) || (i === 2 && !e.inadmissible && e.op !== "parent_copy");
+  steps.forEach((li, i) => li.classList.toggle("skip", skipped(i)));
+  const show = (i) => {
+    steps.forEach((li, j) => li.classList.toggle("on", j === i));
+    $("box-child").classList.toggle("hidden", i >= 0 && i < 1);
+    $("box-parent").classList.toggle("hidden", false);
+  };
+  if (!animate) { show(-1); steps.forEach((li) => li.classList.remove("on")); $("box-child").classList.remove("hidden"); return; }
+  show(0);
+  [1, 2, 3, 4, 5].forEach((i, k) => stepTimers.push(setTimeout(() => show(i), 450 * (k + 1))));
+  stepTimers.push(setTimeout(() => steps.forEach((li) => li.classList.remove("on")), 450 * 7));
+}
+
+// ------------------------------------------------------------------ section 2: run
+function renderSnapshot() {
+  const snaps = trace.snapshots, snap = snaps[snapIndex];
+  $("snap-status").textContent = `iteracja ${snap.iterations} z ${trace.options.iterations} · ${snap.offspring.toLocaleString("pl-PL")} potomków · ${pl(snap.seconds.toFixed(2))} s`;
+  const best = bestOf(snap);
+  $("snap-formula").innerHTML = formulaHtml(best.expr);
+  $("snap-meta").textContent = `${best.c} węzłów, strata treningowa ${fmtLoss(best.loss)}`;
+  drawLoss(); drawFront(); drawFit();
+}
+
+function drawLoss() {
+  const chart = $("chart-loss"), svg = chart.querySelector("svg");
+  svg.replaceChildren();
+  const snaps = trace.snapshots, losses = snaps.map((s) => bestOf(s).loss);
+  const ys = logScale(losses), maxX = snaps[snaps.length - 1].offspring || 1;
+  const x = lin(0, maxX, M.l, W - M.r);
+  axes(svg, { xTicks: niceTicks(0, maxX, 4), x, xLabel: "liczba potomków", yTicks: logTicks(ys), y: ys.y, yLabel: "MSE",
+    yFormat: (v) => (Math.log10(v) <= Math.log10(FLOOR) ? "≤" : "") + supExp(Math.round(Math.log10(v))) });
+  let d = "";
+  snaps.forEach((s, i) => {
+    const px = x(s.offspring), py = ys.y(losses[i]);
+    d += i === 0 ? `M${px},${py}` : `H${px}V${py}`;
+  });
+  el("path", { d, fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  const cur = snaps[snapIndex];
+  el("line", { x1: x(cur.offspring), x2: x(cur.offspring), y1: M.t, y2: H - M.b, stroke: "var(--text-muted)", "stroke-width": 1 }, svg);
+  el("circle", { cx: x(cur.offspring), cy: ys.y(losses[snapIndex]), r: 5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+  const hair = el("line", { y1: M.t, y2: H - M.b, stroke: "var(--text-muted)", "stroke-width": 1, visibility: "hidden" }, svg);
+  el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" }, svg);
+  svg.onmousemove = (event) => {
+    const p = svgPoint(svg, event);
+    let k = 0;
+    snaps.forEach((s, i) => { if (s.offspring <= Math.max(0, (p.x - M.l) / (W - M.l - M.r) * maxX)) k = i; });
+    hair.setAttribute("x1", x(snaps[k].offspring)); hair.setAttribute("x2", x(snaps[k].offspring)); hair.setAttribute("visibility", "visible");
+    showTip(chart, svg, `iteracja ${snaps[k].iterations}<br>${snaps[k].offspring.toLocaleString("pl-PL")} potomków<br>MSE ${fmtLoss(losses[k])}`, x(snaps[k].offspring), ys.y(losses[k]));
+  };
+  svg.onmouseleave = () => { hair.setAttribute("visibility", "hidden"); showTip(chart, svg, null); };
+  svg.onclick = (event) => {
+    const p = svgPoint(svg, event);
+    let k = 0;
+    snaps.forEach((s, i) => { if (s.offspring <= (p.x - M.l) / (W - M.l - M.r) * maxX) k = i; });
+    setSnapshot(k);
+  };
+}
+
+function drawFront() {
+  const chart = $("chart-front"), svg = chart.querySelector("svg");
+  svg.replaceChildren();
+  const snap = trace.snapshots[snapIndex];
+  const all = trace.snapshots.flatMap((s) => s.front.map((f) => f.loss)).concat(trace.snapshots[0].population.map((p) => p[1]));
+  const ys = logScale(all.filter((v) => v !== null && v < 1e12));
+  const maxC = trace.options.max_size;
+  const x = lin(0.5, maxC + 0.5, M.l, W - M.r);
+  axes(svg, { xTicks: niceTicks(1, maxC, 5), x, xLabel: "złożoność (liczba węzłów)", yTicks: logTicks(ys), y: ys.y, yLabel: "MSE",
+    yFormat: (v) => supExp(Math.round(Math.log10(v))) });
+  const pop = el("g", {}, svg);
+  for (const [c, loss] of snap.population) {
+    if (loss === null || loss > Math.pow(10, ys.hi)) continue;
+    const jitter = ((c * 7919 + Math.round(Math.log10(Math.max(loss, FLOOR)) * 13)) % 9 - 4) * 1.6;
+    el("circle", { cx: x(c) + jitter, cy: ys.y(loss), r: 3, fill: "var(--neutral-mark)", "fill-opacity": 0.55 }, pop);
+  }
+  let d = "";
+  snap.front.forEach((f, i) => { d += i === 0 ? `M${x(f.c)},${ys.y(f.loss)}` : `H${x(f.c)}V${ys.y(f.loss)}`; });
+  el("path", { d, fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+  const dots = snap.front.map((f) => {
+    el("circle", { cx: x(f.c), cy: ys.y(f.loss), r: 5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+    return { f, px: x(f.c), py: ys.y(f.loss) };
+  });
+  svg.onmousemove = (event) => {
+    const p = svgPoint(svg, event);
+    let best = null, dist = 18;
+    for (const dot of dots) { const dd = Math.hypot(dot.px - p.x, dot.py - p.y); if (dd < dist) { dist = dd; best = dot; } }
+    showTip(chart, svg, best && `<div class="formula">${formulaHtml(best.f.expr)}</div>${best.f.c} węzłów · MSE ${fmtLoss(best.f.loss)}`, best?.px, best?.py);
+  };
+  svg.onmouseleave = () => showTip(chart, svg, null);
+}
+
+function drawFit() {
+  const chart = $("chart-fit"), svg = chart.querySelector("svg");
+  svg.replaceChildren();
+  const best = bestOf(trace.snapshots[snapIndex]);
+  const tree = parse(best.expr), names = trace.features, rows = trace.rows;
+  const envOf = (row) => Object.fromEntries(names.map((n, i) => [n, row[i]]));
+  const target = (row) => row[row.length - 1];
+  if (names.length === 1) {
+    $("fit-title").textContent = "Dopasowanie do danych";
+    $("fit-sub").textContent = `dane treningowe i najlepszy wzór, ${names[0]} → ${trace.target}`;
+    $("fit-legend").innerHTML = `<span class="key"><span class="swatch" style="background:var(--neutral-mark)"></span>dane treningowe</span><span class="key"><span class="swatch line" style="background:var(--series-1)"></span>najlepszy wzór</span>`;
+    const xs = rows.map((r) => r[0]), yv = rows.map(target);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const grid = Array.from({ length: 241 }, (_, i) => x0 + (x1 - x0) * i / 240);
+    const fy = grid.map((v) => evaluate(tree, { [names[0]]: v }));
+    const ylo = Math.min(...yv), yhi = Math.max(...yv), pad = (yhi - ylo) * 0.1;
+    const x = lin(x0, x1, M.l, W - M.r), y = lin(ylo - pad, yhi + pad, H - M.b, M.t);
+    axes(svg, { xTicks: niceTicks(x0, x1, 5), x, xLabel: names[0], yTicks: niceTicks(ylo - pad, yhi + pad, 5), y, yLabel: trace.target,
+      yFormat: (v) => pl(String(v)) });
+    const g = el("g", {}, svg);
+    rows.forEach((r) => el("circle", { cx: x(r[0]), cy: y(target(r)), r: 3, fill: "var(--neutral-mark)", "fill-opacity": 0.7 }, g));
+    let d = "", pen = false;
+    grid.forEach((v, i) => {
+      const val = fy[i];
+      if (!Number.isFinite(val) || val < ylo - 3 * pad - (yhi - ylo) || val > yhi + 3 * pad + (yhi - ylo)) { pen = false; return; }
+      d += `${pen ? "L" : "M"}${x(v)},${Math.max(M.t - 20, Math.min(H - M.b + 20, y(val)))}`; pen = true;
+    });
+    el("path", { d, fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "clip-path": "url(#fit-clip)" }, svg);
+    const clip = el("clipPath", { id: "fit-clip" }, el("defs", {}, svg));
+    el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b }, clip);
+    svg.onmousemove = (event) => {
+      const p = svgPoint(svg, event);
+      if (p.x < M.l || p.x > W - M.r) return showTip(chart, svg, null);
+      const v = x0 + (p.x - M.l) / (W - M.l - M.r) * (x1 - x0), val = evaluate(tree, { [names[0]]: v });
+      showTip(chart, svg, `${esc(names[0])} = ${fmtConst(v, 3)}<br>wzór: ${fmtConst(val, 4)}`, x(v), y(Number.isFinite(val) ? val : ylo));
+    };
+  } else {
+    $("fit-title").textContent = "Przewidywania a dane";
+    $("fit-sub").textContent = "każdy punkt to wiersz treningowy; idealny wzór leży na przekątnej";
+    $("fit-legend").innerHTML = `<span class="key"><span class="swatch" style="background:var(--series-1)"></span>wiersze treningowe</span><span class="key"><span class="swatch line" style="background:var(--text-muted)"></span>przewidywanie = obserwacja</span>`;
+    const obs = rows.map(target), pred = rows.map((r) => evaluate(tree, envOf(r)));
+    const lo = Math.min(...obs), hi = Math.max(...obs), pad = (hi - lo) * 0.08;
+    const x = lin(lo - pad, hi + pad, M.l, W - M.r), y = lin(lo - pad, hi + pad, H - M.b, M.t);
+    axes(svg, { xTicks: niceTicks(lo - pad, hi + pad, 5), x, xLabel: `obserwowane ${trace.target}`, yTicks: niceTicks(lo - pad, hi + pad, 5), y,
+      yLabel: `przewidywane ${trace.target}`, yFormat: (v) => pl(String(v)) });
+    el("line", { x1: x(lo - pad), y1: y(lo - pad), x2: x(hi + pad), y2: y(hi + pad), stroke: "var(--text-muted)", "stroke-width": 1 }, svg);
+    const g = el("g", {}, svg);
+    const pts = [];
+    rows.forEach((r, i) => {
+      if (!Number.isFinite(pred[i])) return;
+      const py = Math.max(M.t, Math.min(H - M.b, y(pred[i])));
+      el("circle", { cx: x(obs[i]), cy: py, r: 4, fill: "var(--series-1)", "fill-opacity": 0.75, stroke: "var(--surface-1)", "stroke-width": 1 }, g);
+      pts.push({ px: x(obs[i]), py, r, p: pred[i] });
+    });
+    svg.onmousemove = (event) => {
+      const p = svgPoint(svg, event);
+      let best = null, dist = 12;
+      for (const q of pts) { const dd = Math.hypot(q.px - p.x, q.py - p.y); if (dd < dist) { dist = dd; best = q; } }
+      showTip(chart, svg, best && names.map((n, i) => `${esc(n)} = ${fmtConst(best.r[i], 3)}`).join(", ") +
+        `<br>obserwowane ${fmtConst(target(best.r), 4)}, przewidywane ${fmtConst(best.p, 4)}`, best?.px, best?.py);
+    };
+  }
+  svg.onmouseleave = () => showTip(chart, svg, null);
+}
+
+function setSnapshot(k) {
+  snapIndex = Math.max(0, Math.min(k, trace.snapshots.length - 1));
+  $("slider").value = snapIndex;
+  renderSnapshot();
+}
+function stopPlaying() { if (playing) clearInterval(playing); playing = null; $("play").textContent = "▶ Odtwórz"; }
+function togglePlay() {
+  if (playing) return stopPlaying();
+  if (snapIndex >= trace.snapshots.length - 1) setSnapshot(0);
+  $("play").textContent = "❚❚ Pauza";
+  const delay = Math.max(40, Math.min(250, 9000 / trace.snapshots.length));  // about 9 s per run
+  playing = setInterval(() => {
+    if (snapIndex >= trace.snapshots.length - 1) return stopPlaying();
+    setSnapshot(snapIndex + 1);
+  }, delay);
+}
+
+// ------------------------------------------------------------------ section 3: result
+function renderResult() {
+  const r = trace.result;
+  const stats = [
+    ["Wybrany wzór", `${r.complexity} węzłów`],
+    ["MSE testowe", fmtLoss(r.test_loss)],
+    ["Potomkowie", r.offspring.toLocaleString("pl-PL")],
+    ["Czas", `${pl(r.seconds.toFixed(2))} s`],
+    ["Odrzucone przez ograniczenia", r.inadmissible.toLocaleString("pl-PL")],
+    ["Niezdefiniowana arytmetyka", r.failed.toLocaleString("pl-PL")],
+  ];
+  $("stats").innerHTML = stats.map(([l, v]) => `<div class="stat"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("");
+  $("front-table").innerHTML = r.front.map((f) => {
+    const selected = f.expr === r.equation;
+    return `<tr class="${selected ? "selected" : ""}"><td class="num">${f.c}</td><td class="num">${fmtLoss(f.loss)}</td>` +
+      `<td class="num">${fmtLoss(f.val)}</td><td class="formula">${formulaHtml(f.expr)}${selected ? '<span class="tag">wybrany</span>' : ""}</td></tr>`;
+  }).join("");
+}
+
+// ------------------------------------------------------------------ wiring
+TRACES.forEach((t, i) => { const o = document.createElement("option"); o.value = i; o.textContent = t.label; $("run-select").appendChild(o); });
+$("run-select").onchange = (e) => loadRun(Number(e.target.value));
+$("ev-prev").onclick = () => { eventIndex--; renderEvent(true); };
+$("ev-next").onclick = () => { eventIndex++; renderEvent(true); };
+$("ev-records").onchange = () => { eventIndex = 0; renderEvent(false); };
+$("slider").oninput = (e) => { stopPlaying(); setSnapshot(Number(e.target.value)); };
+$("play").onclick = togglePlay;
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT" && e.target.type === "range") return;
+  if (e.key === "ArrowRight") { eventIndex++; renderEvent(true); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { eventIndex--; renderEvent(true); e.preventDefault(); }
+  else if (e.key === " ") { togglePlay(); e.preventDefault(); }
+});
+if (TRACES.length) loadRun(0);
+else document.querySelector("main").insertAdjacentHTML("beforeend", "<p>Brak danych: uruchom presentation/make_traces.sh.</p>");
+</script>
+</body>
+</html>

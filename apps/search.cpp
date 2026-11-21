@@ -83,6 +83,15 @@ std::string json_number(double value) {
     return output.str();
 }
 
+// Six significant digits: enough for plots, keeps traces small.
+std::string json_short(double value) {
+    if (!std::isfinite(value)) return "null";
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(6) << value;
+    return output.str();
+}
+
 std::string json_string(const std::string& text) {
     std::string output = "\"";
     for (const char c : text) {
@@ -317,8 +326,8 @@ int main(int argc, char** argv) {
             const std::size_t stride = std::max<std::size_t>(1, train.inputs.size() / 200);
             for (std::size_t row = 0, written = 0; row < train.inputs.size(); row += stride, ++written) {
                 trace << (written ? "," : "") << '[';
-                for (const double x : train.inputs[row]) trace << json_number(x) << ',';
-                trace << json_number(train.targets[row]) << ']';
+                for (const double x : train.inputs[row]) trace << json_short(x) << ',';
+                trace << json_short(train.targets[row]) << ']';
             }
             trace << "],\"options\":{\"seed\":" << options.seed << ",\"population_size\":" << options.population_size
                   << ",\"iterations\":" << options.iterations << ",\"tournament_size\":" << options.tournament_size
@@ -335,7 +344,7 @@ int main(int argc, char** argv) {
                       << ",\"front\":" << candidates(snapshot.front) << ",\"population\":[";
                 for (std::size_t j = 0; j < snapshot.population.size(); ++j) {
                     trace << (j ? "," : "") << '[' << snapshot.population[j].first << ','
-                          << json_number(snapshot.population[j].second) << ']';
+                          << json_short(snapshot.population[j].second) << ']';
                 }
                 trace << "]}";
             }
