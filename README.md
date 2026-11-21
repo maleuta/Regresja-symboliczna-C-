@@ -1,8 +1,11 @@
 # Regresja symboliczna w C++23
 
-Implementacja etapów **19.10 i 26.10**: środowisko, dane fizyczne, próba PySR,
-szkic raportu oraz obliczanie zadanych wyrażeń. Wyszukiwanie ewolucyjne w C++,
-optymalizacja stałych i szablony pozostają kolejnymi etapami planu.
+Implementacja etapów **19.10–23.11**: środowisko, dane fizyczne, próba PySR,
+szkic raportu, obliczanie wyrażeń, wyszukiwanie ewolucyjne z optymalizacją stałych,
+hall of fame, własne operatory i funkcje straty w wyszukiwaniu oraz ograniczenia
+złożoności. Szablony wyrażeń i porównanie z PySR są kolejnymi etapami planu.
+Szczegółowy opis kodu i decyzji projektowych (po angielsku):
+[project_explanation.md](project_explanation.md).
 
 ## Struktura i odpowiedzialności
 
@@ -11,10 +14,15 @@ optymalizacja stałych i szablony pozostają kolejnymi etapami planu.
 | `include/sr/dataset.hpp`, `src/dataset.cpp` | Dane tabelaryczne, walidacja, odczyt i zapis CSV |
 | `include/sr/expression.hpp`, `src/expression.cpp` | Drzewa wyrażeń, rejestr operatorów/loss, obliczanie, predykcja i strata |
 | `include/sr/benchmarks.hpp`, `src/benchmarks.cpp` | Definicje trzech zależności fizycznych, próbkowanie i szum |
+| `include/sr/constraints.hpp`, `src/constraints.cpp` | Limity rozmiaru, głębokości, argumentów operatorów i wykładnika potęgi |
+| `include/sr/search.hpp`, `src/search.cpp` | Konfiguracja, operatory wariacji, optymalizacja stałych, `fit` |
 | `apps/generate_data.cpp` | Generator CSV i manifestu; parametry w `data/SPEC.md` |
 | `apps/example.cpp` | Obliczanie wzoru sprężyny, wydruk drzewa oraz błędy MSE i MAE |
-| `apps/custom_functions.cpp` | Rejestracja własnego operatora unarnego, binarnego i straty Huber |
+| `apps/custom_functions.cpp` | Własny operator unarny, binarny i strata Huber, także w wyszukiwaniu |
+| `apps/constraints.cpp` | Sprawdzanie reguł i wyszukiwanie z ograniczeniami (projectile) |
+| `apps/search.cpp` | Program `sr_search`: dopasowanie, wybór na walidacji, test, eksport |
 | `tests/test_sr.cpp` | Wartości wzorcowe, dziedziny, błędne CSV i powtarzalność danych |
+| `tests/test_search.cpp` | Edycja drzew, `pow`, ograniczenia, mutacje, optymalizacja, wyszukiwanie |
 | `baseline/` | Wyłącznie adapter do uruchamiania PySR i przypięte zależności Pythona |
 | `report/report.tex` | Samodzielny szkic artykułu LaTeX |
 
@@ -32,9 +40,12 @@ build/sr_example
 build/sr_generate artifacts/data
 build/sr_example artifacts/data/spring_clean_test.csv
 build/sr_custom artifacts/data/projectile_noisy_test.csv
+build/sr_constraints
+build/sr_search
+build/sr_search artifacts/data/projectile_clean_{train,validation,test}.csv --iterations 200 --population 100 --output artifacts/search/projectile
 ```
 
-Przykład oblicza **zadany** wzór sprężyny, nie odkrywa go automatycznie.
+`sr_example` oblicza **zadany** wzór sprężyny; wzory odkrywa `sr_search`.
 Programy zwracają kod 1 i komunikat w przypadku błędu.
 
 Opcjonalne sprawdzenie pamięci (GCC/Clang):
@@ -63,8 +74,8 @@ błędne liczby oraz brak celu są odrzucane. Zapis umieszcza cel na końcu.
 i oblicza cały `Dataset`; `mean_loss` uśrednia nieujemną stratę punktową.
 `size` liczy każdy węzeł jako 1, a `depth` przyjmuje głębokość liścia równą 1.
 Kod użycia znajduje się w `apps/example.cpp` (operatory standardowe) i
-`apps/custom_functions.cpp` (własne `exp`, `hypot` i strata Huber); parser tekstowych wzorów nie jest
-potrzebny do tego etapu. `to_string` służy do wyświetlania, nie serializacji modelu.
+`apps/custom_functions.cpp` (własne `exp`, `hypot` i strata Huber, również w
+wyszukiwaniu); parser tekstowych wzorów nie jest potrzebny. `to_string` służy do wyświetlania, nie serializacji modelu.
 
 `to_tree()` zwraca tekstowe drzewo z typami węzłów i gałęziami ASCII. Nie wymaga
 rejestru funkcji ani danych i nie wykonuje obliczeń. Przykład `build/sr_example`
@@ -91,11 +102,59 @@ a `variable` zmienną. Dzieci funkcji binarnej są wyświetlane w kolejności le
 prawy argument. Metoda
 wyświetla już istniejący `Expression`; wprowadzanie wzoru jako tekstu wymagałoby parsera.
 
-Standardowe operatory: `+`, `-`, `*`, `/`, `sin`, `cos`, `square`; straty: `mse`,
-`mae`. Puste i powtórzone rejestracje są odrzucane. Niepoprawne dane, nazwy lub
+Standardowe operatory: `+`, `-`, `*`, `/`, `pow`, `sin`, `cos`, `square`; straty:
+`mse`, `mae`. `pow` jest zdefiniowany tylko dla rzeczywistych wyników: `0^e` dla
+`e < 0` oraz ujemna podstawa z niecałkowitym wykładnikiem dają `std::domain_error`.
+Puste i powtórzone rejestracje są odrzucane. Niepoprawne dane, nazwy lub
 rozmiary powodują `std::invalid_argument`; niepoprawna arytmetyka, przepełnienie
-i ujemna/nieskończona strata powodują `std::domain_error`. Wyszukiwanie będzie
-mogło później odrzucać takie wyrażenia zamiast uznawać je za dobre rozwiązania.
+i ujemna/nieskończona strata powodują `std::domain_error`. Wyszukiwanie przypisuje
+takim kandydatom stratę +∞, więc nie trafiają do hall of fame.
+
+`subtree(i)` i `replaced(i, drzewo)` adresują węzły w kolejności preorder (korzeń
+ma indeks 0); edycja zwraca nowe drzewo i nie zmienia oryginału. `constants()` oraz
+`with_constants(...)` udostępniają stałe w tej samej kolejności. `predict` kompiluje
+drzewo raz do programu postfiksowego i daje te same wyniki co `evaluate`.
+
+## Wyszukiwanie
+
+`sr::fit(train, validation, options, functions)` wykonuje ewolucję z jedną populacją:
+losową inicjalizację drzew dopuszczalnych, selekcję turniejową, sześć mutacji
+i krzyżowanie poddrzew, zastępowanie najstarszego osobnika, optymalizację stałych
+przez przeszukiwanie kolejnych współrzędnych (z krokiem parabolicznym) oraz hall
+of fame z najlepszym wzorem dla każdej złożoności. Model jest wybierany na danych
+walidacyjnych: najprostszy wzór frontu Pareta o stracie co najwyżej 5% większej
+od minimalnej. Dla ustalonego ziarna i bez limitu czasu wynik jest powtarzalny.
+
+```cpp
+sr::FunctionRegistry functions;
+functions.add_binary("hypot", [](double a, double b) { return std::hypot(a, b); });
+sr::SearchOptions options;
+options.binary_operators = {"+", "-", "*", "hypot"};  // nazwy z rejestru
+options.loss = "mse";
+options.population_size = 64;
+options.iterations = 40;
+options.seed = 0;
+options.time_limit_seconds = 90;                      // opcjonalnie; także target_loss
+options.constraints.max_size = 20;
+options.constraints.max_depth = 10;
+options.constraints.arguments["pow"] = {3, 1};        // jak PySR constraints={"pow": (3, 1)}
+options.constraints.exponent = sr::ExponentLimit{.max_abs_value = 3, .integer_only = true};
+const auto result = sr::fit(train, validation, options, functions);
+// result.best, result.hall_of_fame, result.population, result.statistics
+```
+
+Własne operatory i funkcje straty są przekazywane nazwą, więc pętla wyszukiwania
+nie wymaga zmian. Złożoność to liczba węzłów. Ograniczenia obejmują `max_size`,
+`max_depth`, maksymalny rozmiar każdego argumentu operatora oraz wykładnik potęgi
+(stała, `|e| ≤ k`, opcjonalnie całkowita). Losowe drzewa są budowane w granicach
+limitów, a wynik każdej mutacji i krzyżowania jest sprawdzany przez `violation()`;
+niedopuszczalna propozycja jest odrzucana i losowana ponownie. Niepoprawna
+konfiguracja (nieznany operator, zła arność, limit dla operatora spoza zbioru
+itp.) powoduje `std::invalid_argument` przed startem.
+
+`sr_search --help` opisuje opcje programu. `--output DIR` zapisuje
+`hall_of_fame.csv` oraz `result.json` z konfiguracją, statystykami, wzorem
+i błędami (nazwy pól zgodne z adapterem PySR).
 
 ## Próba PySR
 
@@ -139,7 +198,7 @@ XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted --keep-logs -o
 Wynik to `artifacts/report/report.pdf`; log kompilacji znajduje się w tym samym
 katalogu. Przy pierwszym uruchomieniu pobierane są pakiety TeX, przechowywane
 w `.cache/`. Kompilator, pakiety i wygenerowane pliki nie są zapisywane w Git.
-Kompilację raportu i poprawność polskich znaków potwierdzono; wynik ma 4 strony.
+Kompilację raportu i poprawność polskich znaków potwierdzono.
 Po pobraniu pakietów działa również kompilacja offline z opcją `--only-cached`.
 
 Dokumentacja źródłowa: [PySR API](https://pysr.ai/v2.6.0/api),

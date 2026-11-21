@@ -11,7 +11,7 @@
 \emergencystretch=3em
 \title{Regresja symboliczna w C++23\\Szkic raportu projektu}
 \author{Studio projektowe 1}
-\date{26 października 2026}
+\date{23 listopada 2026}
 
 \begin{document}
 \maketitle
@@ -20,10 +20,11 @@
 Projekt dotyczy implementacji regresji symbolicznej w C++23 oraz porównania
 jej z PySR. Niniejszy dokument jest szkicem raportu: opisuje cel, przegląd
 istniejących metod, mechanizmy wyszukiwania stosowane w PySR, zbiory danych
-i plan oceny. Obecny etap obejmuje przygotowanie środowiska, generator danych,
-reprezentację wyrażeń jako drzew, obliczanie ich wartości oraz API własnych
-operatorów i funkcji straty. Wyszukiwanie ewolucyjne w C++ oraz końcowe
-porównanie nie są jeszcze wykonane.
+i plan oceny. Obecny etap obejmuje generator danych, reprezentację i obliczanie
+wyrażeń, wyszukiwanie ewolucyjne z optymalizacją stałych i hall of fame, własne
+operatory i funkcje straty używane przez wyszukiwanie oraz ograniczenia
+złożoności wyrażeń. Wstępne uruchomienia odtwarzają wszystkie trzy zależności
+dla części ziaren; końcowe porównanie z PySR nie jest jeszcze wykonane.
 \end{abstract}
 
 \section{Cel i zakres}
@@ -116,27 +117,103 @@ i \texttt{add\_loss}. Dzięki temu dodanie operatora nie wymaga zmian
 w drzewie ani w przyszłej pętli wyszukiwania. Program \texttt{sr\_custom}
 pokazuje rejestrację funkcji $\exp$, $\mathrm{hypot}$ i straty Hubera.
 
-Obliczanie odbywa się rekurencyjnie z arytmetyką \texttt{double};
-\texttt{predict} oblicza wzór dla każdego wiersza, a \texttt{mean\_loss}
+Obliczanie odbywa się z arytmetyką \texttt{double}. Funkcja \texttt{evaluate}
+jest rekurencyjnym interpreterem jednego wiersza i służy jako implementacja
+wzorcowa; \texttt{predict} kompiluje drzewo raz do programu postfiksowego
+z rozwiązanymi nazwami operatorów i zmiennych, a następnie wykonuje go dla
+każdego wiersza. Test na 300 losowych drzewach potwierdza zgodność obu ścieżek.
+\texttt{mean\_loss}
 uśrednia wybraną stratę punktową. Niepoprawne dane, nieznane zmienne lub
 operatory, zła liczba argumentów i powtórna rejestracja powodują
 \texttt{std::invalid\_argument}. Dzielenie przez zero, wyniki NaN/Inf
 oraz ujemna lub nieskończona strata powodują \texttt{std::domain\_error};
-pętla wyszukiwania będzie odrzucać takich kandydatów, podobnie jak PySR
-przypisuje im nieskończoną stratę. Metoda \texttt{to\_tree} wypisuje
+wyszukiwanie przypisuje takim kandydatom nieskończoną stratę, podobnie jak PySR.
+Wbudowany operator \texttt{pow} jest zdefiniowany tylko dla rzeczywistych
+wyników: $0^e$ dla $e<0$ i ujemna podstawa z niecałkowitym wykładnikiem są
+błędami dziedziny. Metoda \texttt{to\_tree} wypisuje
 strukturę drzewa do celów diagnostycznych.
 
-Testy obejmują pięć grup: CSV, generowanie danych, wyrażenia, własne funkcje
-i straty. Sprawdzają wartości wzorcowe, przypadki graniczne, niepoprawne dane
-i arytmetykę oraz powtarzalność danych. CTest uruchamia także trzy programy
-przykładowe. Kod kompiluje się bez ostrzeżeń przy \texttt{-Wall}, \texttt{-Wextra},
-\texttt{-Wpedantic}, \texttt{-Wconversion} i \texttt{-Wshadow}, a testy przechodzą również z AddressSanitizer
-i UndefinedBehaviorSanitizer.
+\subsection{Wyszukiwanie ewolucyjne}
+Węzły drzewa są numerowane w kolejności preorder. Metody \texttt{subtree}
+i \texttt{replaced} odczytują i zastępują węzeł o danym indeksie, zwracając
+nowe drzewo bez zmiany oryginału, co pozwala bezpiecznie przechowywać rodzica
+w populacji podczas tworzenia potomków.
 
-Na kolejnych etapach zostaną dodane inicjalizacja populacji, selekcja
-turniejowa, mutacje, krzyżowanie, zastępowanie najstarszego osobnika
-oraz optymalizacja stałych przez przeszukiwanie kolejnych współrzędnych
-zamiast BFGS.
+Wyszukiwanie realizuje \emph{regularized evolution}~\cite{real} z jedną
+populacją. Populacja początkowa składa się z losowych drzew o rozmiarze
+z zakresu $[1,7]$. W każdym cyklu zwycięzca turnieju (8 różnych osobników,
+$k$-ty najlepszy wygrywa z prawdopodobieństwem $p(1-p)^k$, $p=0{,}7$) jest
+mutowany albo, z prawdopodobieństwem 0,2, krzyżowany ze zwycięzcą drugiego
+turnieju przez wymianę losowych poddrzew. Mutacje zmieniają stałą, operator
+(z zachowaniem arności) lub liść, zastępują poddrzewo nowym, wstawiają albo
+usuwają węzeł. Potomek zastępuje najstarszego członka populacji. Iteracja
+składa się z tylu cykli, ile osobników ma populacja; konfigurowalne są
+rozmiar populacji, liczba iteracji, ziarno, budżet czasu i docelowa strata.
+Dla ustalonego ziarna i bez limitu czasu przebieg jest deterministyczny.
+Wartość $p=0{,}7$ wybrano doświadczalnie: przy $p=0{,}9$ populacja
+przedwcześnie zbiegała do wzoru $t\,(v_0-c)$ i nie odtwarzała ruchu pionowego
+dla żadnego z trzech ziaren.
+
+Stałe są optymalizowane przez przeszukiwanie kolejnych współrzędnych. Dla
+stałej $c_i$ obliczane są straty w punktach $c_i\pm h_i$, a gdy trzy wartości
+tworzą funkcję wypukłą, także w wierzchołku paraboli
+\[
+c^* = c_i - h_i\,\frac{L_+ - L_-}{2\,(L_+ - 2L_0 + L_-)}.
+\]
+Przyjmowany jest najlepszy punkt, a krok przyjmuje długość wykonanego ruchu;
+brak poprawy zmniejsza krok o połowę. Dla współczynnika występującego liniowo
+przy stracie MSE parabola jest dokładna, dlatego test na ustalonym wzorze
+$a x + b$ odtwarza $a=2{,}5$ i $b=0{,}75$ z dokładnością $10^{-9}$ niezależnie
+od losowego wyszukiwania. Optymalizowane jest 5\% potomków oraz, po każdej
+iteracji, wpisy hall of fame, dopóki ich strata się poprawia.
+
+Hall of fame przechowuje najlepszy wzór dla każdej złożoności (liczby węzłów)
+i na końcu jest zawężany do frontu Pareta. Model jest wybierany na danych
+walidacyjnych jako najprostszy wzór frontu o stracie nie większej niż
+$\max(1{,}05\,L_{\min},\ 10^{-12} L_1)$, gdzie $L_1$ to strata najprostszego wzoru;
+drugi wyraz traktuje straty na poziomie błędów zaokrągleń jako równe.
+Wybór czystego minimum prowadził do wzorów o złożoności 13--19 dla sprężyny.
+
+\subsection{Konfigurowalność i ograniczenia}
+Konfiguracja wyszukiwania zawiera jedynie nazwy operatorów i funkcji straty
+z rejestru, dlatego własne funkcje są używane bez zmian pętli wyszukiwania.
+Program \texttt{sr\_custom} rejestruje operator $\mathrm{hypot}$ i stratę Hubera,
+a wyszukiwanie odnajduje wzór $\mathrm{hypot}(F_y, F_x)$ dla wypadkowej dwóch
+prostopadłych sił. Złożoność jest liczbą węzłów, jak domyślnie w PySR.
+Ograniczenia obejmują maksymalny rozmiar i głębokość wyrażenia, maksymalny
+rozmiar każdego argumentu wybranych operatorów (odpowiednik
+\texttt{constraints=\{"pow": (3, 1)\}} w PySR) oraz wykładnik potęgi, który
+musi być stałą o wartości $|e|\le k$, opcjonalnie całkowitą. Funkcja
+\texttt{violation} zwraca opis pierwszej naruszonej reguły, np.\
+\emph{exponent 2.5 of pow must be an integer}.
+
+Limity są przestrzegane na dwa sposoby. Generator drzew ogranicza budżet
+rozmiaru każdego argumentu do jego limitu i losuje wykładnik z dozwolonego
+zakresu, więc losowe drzewa są dopuszczalne z konstrukcji. Wynik każdej
+mutacji i krzyżowania jest sprawdzany pod kątem ograniczeń, dozwolonych
+operatorów z właściwą arnością i dozwolonych zmiennych; propozycja
+niedopuszczalna jest odrzucana i losowana ponownie (do 10 razy), a w razie
+niepowodzenia zachowywana jest kopia rodzica. Optymalizator stałych otrzymuje
+nieskończoną stratę dla drzew niedopuszczalnych, więc nie przesuwa wykładnika
+poza limit. Niespójna konfiguracja, np.\ nieznany operator, operator o złej
+arności lub limit dla operatora spoza zbioru, jest odrzucana przed startem.
+
+\subsection{Testy}
+Testy obejmują: odczyt i zapis CSV, generowanie danych, wartości wzorcowe
+wyrażeń, własne funkcje i straty, edycję drzew, przypadki graniczne
+operatora \texttt{pow} (w tym $(-8)^{1/3}$, $0^{-1}$ i przepełnienie), każdą regułę
+ograniczeń dokładnie na granicy i jeden krok za nią, 27 niepoprawnych
+konfiguracji, optymalizację stałych oraz przebieg wyszukiwania. Test
+własności dla 10 ziaren sprawdza, że wszystkie wygenerowane drzewa i wszyscy
+potomkowie 4000 kroków wariacji są poprawne strukturalnie i dopuszczalni,
+a część surowych propozycji narusza limity, co potwierdza, że są one aktywne.
+Testy wyszukiwania sprawdzają powtarzalność dla ustalonego ziarna, trzy reguły
+zatrzymania, kształt frontu Pareta, dopuszczalność populacji końcowej oraz
+odtworzenie wzoru sprężyny o złożoności 5 z testowym MSE poniżej $10^{-20}$
+na nowych danych. CTest uruchamia dwa programy testowe i pięć programów
+przykładowych. Kod kompiluje się bez ostrzeżeń przy \texttt{-Wall},
+\texttt{-Wextra}, \texttt{-Wpedantic}, \texttt{-Wconversion} i \texttt{-Wshadow},
+a testy przechodzą również z AddressSanitizer i UndefinedBehaviorSanitizer.
 
 \section{Dane i metodologia oceny}
 Wykorzystane zostaną trzy syntetyczne zależności fizyczne:
@@ -160,12 +237,44 @@ na danych walidacyjnych, a oceniony na testowych; raport obejmie błąd,
 złożoność, czas i nieudane uruchomienia.
 
 \section{Wyniki}
-Na obecnym etapie rezultatem jest działająca reprezentacja i ewaluacja
-zadanych wyrażeń oraz generator danych. Wzór sprężyny obliczony na czystym
+\subsection{Kontrole obliczeń}
+Wzór sprężyny obliczony na czystym
 zbiorze testowym daje MSE równe 0. Prawdziwy wzór rzutu pionowego obliczony
 na zaszumionym zbiorze testowym daje MSE $1.95\cdot 10^{-3}$, zgodne z wariancją
 dodanego szumu $\sigma^2 = 2.16\cdot 10^{-3}$. Są to kontrole obliczeń,
 a nie wyniki automatycznego odkrycia wzoru.
+
+\subsection{Wstępne uruchomienia wyszukiwania w C++}
+Wykonano 18 uruchomień programu \texttt{sr\_search}: trzy zależności, dwa
+warianty danych i ziarna 0--2, każde po 200 iteracji populacji 100 osobników
+(20\,000 potomków, 1,3--4,3\,s na jednym rdzeniu). Użyto operatorów
+$+,-,\times,/$ oraz $\cos$ dla oscylatora; wybór na danych walidacyjnych,
+ocena na testowych. Za odtworzenie uznano testowe MSE na poziomie błędów
+zaokrągleń (dane czyste) lub wariancji szumu (dane zaszumione).
+\begin{center}
+\begin{tabular}{llcl}
+\toprule
+Zależność & Wariant & Odtworzono & Przykładowy wybrany wzór (złożoność) \\
+\midrule
+Sprężyna & bez szumu & 3/3 & $2{,}5x + 0{,}75$ (5) \\
+Sprężyna & z szumem & 3/3 & $2{,}50034x + 0{,}75113$ (5) \\
+Ruch pionowy & bez szumu & 1/3 & $t\,(v_0 - 4{,}905\,t)$ (7) \\
+Ruch pionowy & z szumem & 2/3 & $t\,(v_0 - 4{,}90472\,t)$ (7) \\
+Oscylator & bez szumu & 2/3 & $1{,}5\cos(t + (t - \cos(-1{,}8755)))$ (9) \\
+Oscylator & z szumem & 1/3 & $1{,}49893\cos(2t + 0{,}29915)$ (8) \\
+\bottomrule
+\end{tabular}
+\end{center}
+Testowe MSE dla zaszumionych sprężyny i ruchu pionowego wynosi
+$1{,}09\cdot10^{-3}$ i $1{,}95\cdot10^{-3}$, co odpowiada wariancji szumu.
+Jedno z odtworzeń oscylatora ma złożoność 20 przy MSE $7\cdot10^{-12}$.
+Nieudane uruchomienia ruchu pionowego kończą się zbieżnością populacji do
+lokalnego optimum; przedłużenie tego samego uruchomienia do 15\,s nie pomaga.
+Z kolei trzy z pięciu nieudanych uruchomień zostały odtworzone przy budżecie
+15\,s. W jednym przypadku wybrany wzór zawierał składnik $7{,}6\cdot10^{-8}/t$,
+nieistotny na danych treningowych i walidacyjnych, lecz rosnący gwałtownie
+dla $t\approx 0$ w zbiorze testowym. Faza oscylatora pojawia się w postaci
+$t + (t - c)$, ponieważ implementacja nie upraszcza wzorów algebraicznie.
 
 Próbne uruchomienia PySR służą weryfikacji środowiska i eksportu wyniku,
 nie zastępują końcowej serii porównawczej. Użyto PySR 2.7.2,
@@ -191,21 +300,28 @@ jednak wzór zawiera zbędne elementy, np.\ $t/t$, i ma złożoność 18 zamiast
 około 8. Rozgrzewka, obejmująca kompilację JIT, trwa wielokrotnie dłużej niż
 właściwe wyszukiwanie, co uzasadnia osobny pomiar kosztu startu. Pojedyncze
 uruchomienia nie stanowią oceny rozrzutu wyników ani dowodu przewagi nad
-implementacją C++. Wyniki końcowej serii zostaną uzupełnione po implementacji
-wyszukiwania w C++.
+implementacją C++. Wyniki końcowej serii zostaną uzupełnione po etapie
+pomiarów.
 
 \section{Dyskusja i ograniczenia}
-Test poprawnego obliczania znanej formuły nie dowodzi skuteczności jej
-wyszukiwania. Ograniczony zestaw danych i liczba powtórzeń nie pozwalają
-na ogólne wnioski o przewadze jednego rozwiązania. Implementacja C++ celowo
+Wstępne uruchomienia trwały 1--4\,s, a planowany budżet wynosi 90\,s, więc
+nie oceniają jeszcze skuteczności przy warunkach porównania. Ograniczony zestaw
+danych i liczba powtórzeń nie pozwalają na ogólne wnioski o przewadze jednego
+rozwiązania. Brak wielu populacji, wyżarzania symulowanego, adaptacyjnej kary
+złożoności i upraszczania wzorów jest widoczny w przypadkach zbieżności do
+lokalnego optimum i w nadmiarowych węzłach wybranych wzorów. Reguła wyboru
+z tolerancją 5\% jest heurystyką, dlatego porównanie powinno przedstawiać
+również cały front Pareta. Implementacja C++ celowo
 upraszcza PySR: jedna populacja zamiast modelu wysp i przeszukiwanie
 współrzędnych zamiast BFGS, co może wpłynąć na jakość wyników przy tym samym
 budżecie czasu. Porównanie wymaga zapisania wersji zależności, rzeczywistych
 danych i ustawień uruchomienia.
 
 \section{Wnioski i dalsze prace}
-Przygotowana baza będzie rozwijana o algorytm ewolucyjny i ograniczenia
-wyrażeń. Wszystkie funkcje obowiązkowe są planowane do 30 listopada,
+Działają wyszukiwanie ewolucyjne, optymalizacja stałych, własne operatory
+i funkcje straty oraz ograniczenia złożoności. Kolejnym etapem jest szablon
+wyrażenia ze stałą strukturą zewnętrzną, jednym uczonym poddrzewem i jawną
+listą zmiennych. Wszystkie funkcje obowiązkowe są planowane do 30 listopada,
 porównanie do 7 grudnia, a pełny pakiet i raport do 14 grudnia 2026 roku.
 
 \begin{thebibliography}{99}
