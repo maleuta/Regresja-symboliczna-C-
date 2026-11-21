@@ -13,6 +13,7 @@ optymalizacja stałych i szablony pozostają kolejnymi etapami planu.
 | `include/sr/benchmarks.hpp`, `src/benchmarks.cpp` | Definicje trzech zależności fizycznych, próbkowanie i szum |
 | `apps/generate_data.cpp` | Generator CSV i manifestu; parametry w `data/SPEC.md` |
 | `apps/example.cpp` | Obliczanie wzoru sprężyny, wydruk drzewa oraz błędy MSE i MAE |
+| `apps/custom_functions.cpp` | Rejestracja własnego operatora unarnego, binarnego i straty Huber |
 | `tests/test_sr.cpp` | Wartości wzorcowe, dziedziny, błędne CSV i powtarzalność danych |
 | `baseline/` | Wyłącznie adapter do uruchamiania PySR i przypięte zależności Pythona |
 | `report/report.tex` | Samodzielny szkic artykułu LaTeX |
@@ -30,6 +31,7 @@ ctest --test-dir build --output-on-failure
 build/sr_example
 build/sr_generate artifacts/data
 build/sr_example artifacts/data/spring_clean_test.csv
+build/sr_custom artifacts/data/projectile_noisy_test.csv
 ```
 
 Przykład oblicza **zadany** wzór sprężyny, nie odkrywa go automatycznie.
@@ -60,7 +62,8 @@ błędne liczby oraz brak celu są odrzucane. Zapis umieszcza cel na końcu.
 `evaluate` oblicza pojedynczy wiersz według nazw zmiennych; `predict` sprawdza
 i oblicza cały `Dataset`; `mean_loss` uśrednia nieujemną stratę punktową.
 `size` liczy każdy węzeł jako 1, a `depth` przyjmuje głębokość liścia równą 1.
-Kod użycia znajduje się w `apps/example.cpp`; parser tekstowych wzorów nie jest
+Kod użycia znajduje się w `apps/example.cpp` (operatory standardowe) i
+`apps/custom_functions.cpp` (własne `exp`, `hypot` i strata Huber); parser tekstowych wzorów nie jest
 potrzebny do tego etapu. `to_string` służy do wyświetlania, nie serializacji modelu.
 
 `to_tree()` zwraca tekstowe drzewo z typami węzłów i gałęziami ASCII. Nie wymaga
@@ -136,7 +139,7 @@ XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted --keep-logs -o
 Wynik to `artifacts/report/report.pdf`; log kompilacji znajduje się w tym samym
 katalogu. Przy pierwszym uruchomieniu pobierane są pakiety TeX, przechowywane
 w `.cache/`. Kompilator, pakiety i wygenerowane pliki nie są zapisywane w Git.
-Kompilację raportu i poprawność polskich znaków potwierdzono; wynik ma 3 strony.
+Kompilację raportu i poprawność polskich znaków potwierdzono; wynik ma 4 strony.
 Po pobraniu pakietów działa również kompilacja offline z opcją `--only-cached`.
 
 Dokumentacja źródłowa: [PySR API](https://pysr.ai/v2.6.0/api),

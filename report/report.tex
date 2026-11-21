@@ -8,19 +8,22 @@
 \usepackage[polish]{babel}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{amsmath,booktabs,hyperref}
+\emergencystretch=3em
 \title{Regresja symboliczna w C++23\\Szkic raportu projektu}
 \author{Studio projektowe 1}
-\date{25 października 2026}
+\date{26 października 2026}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
 Projekt dotyczy implementacji regresji symbolicznej w C++23 oraz porównania
-jej z PySR. Niniejszy dokument jest szkicem raportu: opisuje cel, podstawy
-metody i zbiory danych. Obecny etap obejmuje przygotowanie środowiska,
-generator danych, reprezentację wyrażeń i obliczanie ich wartości.
-Wyszukiwanie ewolucyjne w C++ oraz końcowe porównanie nie są jeszcze wykonane.
+jej z PySR. Niniejszy dokument jest szkicem raportu: opisuje cel, przegląd
+istniejących metod, mechanizmy wyszukiwania stosowane w PySR, zbiory danych
+i plan oceny. Obecny etap obejmuje przygotowanie środowiska, generator danych,
+reprezentację wyrażeń jako drzew, obliczanie ich wartości oraz API własnych
+operatorów i funkcji straty. Wyszukiwanie ewolucyjne w C++ oraz końcowe
+porównanie nie są jeszcze wykonane.
 \end{abstract}
 
 \section{Cel i zakres}
@@ -29,27 +32,111 @@ tabelarycznych. Planowane rozwiązanie obejmuje jedną populację ewolucyjną,
 podstawową optymalizację stałych, konfigurowalne operatory i funkcję straty,
 ograniczenia złożoności oraz proste szablony wyrażeń. Pytania badawcze dotyczą
 odtwarzania zależności fizycznych w obecności szumu oraz kompromisu między
-błędem testowym, złożonością i czasem działania względem PySR.
+błędem testowym, złożonością i czasem działania względem PySR. Zakres nie
+obejmuje wielu populacji, obliczeń na GPU ani pełnej zgodności z PySR.
 
 \section{Przegląd istniejących rozwiązań}
-Regresja symboliczna poszukuje zarówno struktury modelu, jak i jego parametrów.
-PySR wykorzystuje silnik SymbolicRegression.jl oraz wyszukiwanie ewolucyjne
-łączone z upraszczaniem wyrażeń i optymalizacją stałych~\cite{cranmer}.
-Oficjalne API udostępnia wybór operatorów, funkcji straty, limitów złożoności
-i parametrów wyszukiwania~\cite{pysr}. Porównanie będzie dotyczyć całych
-implementacji, a nie samej różnicy między językami C++ i Python.
+Regresja symboliczna poszukuje jednocześnie struktury modelu i jego parametrów.
+Przestrzeń wyrażeń jest dyskretna, rośnie wykładniczo z rozmiarem drzewa,
+a sam problem jest NP-trudny~\cite{virgolin}. Wyróżnia się cztery główne
+rodziny metod.
+
+\emph{Programowanie genetyczne} (GP)~\cite{koza} utrzymuje populację drzew
+wyrażeń i stosuje selekcję, mutacje oraz krzyżowanie. Do tej rodziny należą
+m.in.\ Eureqa~\cite{schmidt}, Operon napisany w C++~\cite{operon} oraz
+PySR~\cite{cranmer}. \emph{Regresja rzadka} przedstawia wynik jako kombinację
+liniową funkcji z ustalonej biblioteki, z których większość ma zerowe wagi
+(FFX~\cite{ffx}, SINDy~\cite{sindy}); jest szybka i deterministyczna, ale
+ograniczona do funkcji zawartych w bibliotece. AI Feynman~\cite{aifeynman}
+wykorzystuje analizę wymiarową, symetrie i rozdzielność zmiennych.
+\emph{Metody głębokiego uczenia} generują wzór symbol po symbolu: przez
+uczenie ze wzmocnieniem (DSR~\cite{dsr}) albo jako pretrenowany
+transformer (NeSymReS~\cite{nesymres}, E2E~\cite{e2e}). W porównaniu
+SRBench~\cite{srbench} najwyższą dokładność na danych rzeczywistych
+osiągały metody oparte na GP. Projekt, zgodnie z tematem, realizuje
+podejście GP w stylu PySR.
+
+\subsection{Mechanizmy wyszukiwania w PySR}
+PySR udostępnia interfejs scikit-learn w Pythonie, a wyszukiwanie wykonuje
+pakiet SymbolicRegression.jl w Julii~\cite{cranmer,pysr}. Drzewa są obliczane
+przez DynamicExpressions.jl bez kompilowania każdego wzoru osobno; kompilacja
+JIT dotyczy zestawu operatorów i odbywa się raz. Poniższy opis i wartości
+domyślne pochodzą z kodu źródłowego PySR~2.7.2 i SymbolicRegression.jl~2.7.2.
+
+Domyślnie ewoluuje niezależnie 31 populacji po 27 osobników (model wysp),
+a najlepsze wzory migrują między nimi. W każdej iteracji populacja przechodzi
+380 cykli. W cyklu wybierany jest zwycięzca turnieju: spośród 15 losowych
+osobników najlepszy wygrywa z prawdopodobieństwem 0,982. Zwycięzca jest
+mutowany albo, z prawdopodobieństwem 0,2, krzyżowany z innym zwycięzcą.
+Mutacje zmieniają stałą, operator lub zmienną, dodają, wstawiają lub usuwają
+węzeł, obracają drzewo, upraszczają wzór albo losują nowe drzewo.
+Nowy osobnik zastępuje najstarszego członka populacji (\emph{regularized
+evolution}~\cite{real}). O przyjęciu gorszego wzoru decyduje wyżarzanie
+symulowane z prawdopodobieństwem
+\[
+P = \exp(-\Delta L/(\alpha T)),\qquad \alpha = 3{,}17,
+\]
+gdzie temperatura $T$ maleje liniowo od 1 do 0 w każdej iteracji.
+Adaptacyjna kara złożoności mnoży stratę przez $\exp(1040\,f_c)$, gdzie $f_c$
+jest względną częstością złożoności $c$ wśród ostatnio ocenianych wzorów,
+co rozkłada wyszukiwanie na cały zakres złożoności.
+
+Po cyklach wzory są upraszczane algebraicznie, a dla około 14\% osobników
+stałe są optymalizowane metodą BFGS (8 iteracji, 2 restarty). Wynikiem jest
+\emph{hall of fame} --- najlepszy wzór dla każdej złożoności, czyli front
+Pareta. Domyślna reguła wyboru bierze wzory o stracie nie większej niż
+$1{,}5$ minimum i spośród nich ten z największym spadkiem $\log L$ na
+jednostkę złożoności. Wyrażenia dające NaN lub nieskończoność otrzymują
+nieskończoną stratę.
 
 \section{Metoda i bieżąca implementacja}
-Wyrażenie jest drzewem z węzłami stałej, nazwanej zmiennej oraz operatora
-unarnego lub binarnego. Obliczanie odbywa się rekurencyjnie z arytmetyką
-\texttt{double}. API pozwala rejestrować własne operatory i funkcje straty;
-dostępne funkcje straty to między innymi MSE i MAE. Niepoprawne dane,
-nieznane zmienne lub operatory, dzielenie przez zero i wyniki NaN/Inf są
-zgłaszane jako błędy. Testy obejmują wartości wzorcowe, zapis i odczyt CSV,
-przypadki graniczne oraz powtarzalność generowania danych.
+Biblioteka \texttt{sr} składa się z modułów danych (\texttt{Dataset}, odczyt
+i zapis CSV), generatora zależności fizycznych oraz wyrażeń. Wyrażenie jest
+drzewem obiektów klasy \texttt{Expression}:
+\begin{verbatim}
+class Expression {
+    Kind kind_;                         // constant, variable, unary, binary
+    double value_;                      // wartość stałej
+    std::string name_;                  // nazwa zmiennej lub operatora
+    std::vector<Expression> children_;  // 0, 1 lub 2 poddrzewa
+};
+\end{verbatim}
+Konstruktor jest prywatny, a fabryki \texttt{constant}, \texttt{variable},
+\texttt{unary} i \texttt{binary} gwarantują liczbę dzieci zgodną z rodzajem
+węzła. Dzieci są przechowywane przez wartość, więc kopia drzewa jest niezależna
+od oryginału, co jest potrzebne przy mutacjach i krzyżowaniu. Zmienne są
+wiązane z kolumnami danych po nazwie, a nie po pozycji.
+
+Węzeł przechowuje jedynie nazwę operatora; funkcja jest pobierana podczas
+obliczania z rejestru \texttt{FunctionRegistry}, który odwzorowuje nazwy na
+obiekty \texttt{std::function}. Domyślnie zawiera operatory $+$, $-$,
+$\times$, $/$, $\sin$, $\cos$, kwadrat oraz straty MSE i MAE; własne operatory
+i straty dodaje się metodami \texttt{add\_unary}, \texttt{add\_binary}
+i \texttt{add\_loss}. Dzięki temu dodanie operatora nie wymaga zmian
+w drzewie ani w przyszłej pętli wyszukiwania. Program \texttt{sr\_custom}
+pokazuje rejestrację funkcji $\exp$, $\mathrm{hypot}$ i straty Hubera.
+
+Obliczanie odbywa się rekurencyjnie z arytmetyką \texttt{double};
+\texttt{predict} oblicza wzór dla każdego wiersza, a \texttt{mean\_loss}
+uśrednia wybraną stratę punktową. Niepoprawne dane, nieznane zmienne lub
+operatory, zła liczba argumentów i powtórna rejestracja powodują
+\texttt{std::invalid\_argument}. Dzielenie przez zero, wyniki NaN/Inf
+oraz ujemna lub nieskończona strata powodują \texttt{std::domain\_error};
+pętla wyszukiwania będzie odrzucać takich kandydatów, podobnie jak PySR
+przypisuje im nieskończoną stratę. Metoda \texttt{to\_tree} wypisuje
+strukturę drzewa do celów diagnostycznych.
+
+Testy obejmują pięć grup: CSV, generowanie danych, wyrażenia, własne funkcje
+i straty. Sprawdzają wartości wzorcowe, przypadki graniczne, niepoprawne dane
+i arytmetykę oraz powtarzalność danych. CTest uruchamia także trzy programy
+przykładowe. Kod kompiluje się bez ostrzeżeń przy \texttt{-Wall}, \texttt{-Wextra},
+\texttt{-Wpedantic}, \texttt{-Wconversion} i \texttt{-Wshadow}, a testy przechodzą również z AddressSanitizer
+i UndefinedBehaviorSanitizer.
 
 Na kolejnych etapach zostaną dodane inicjalizacja populacji, selekcja
-turniejowa, mutacje, krzyżowanie i prosta optymalizacja stałych.
+turniejowa, mutacje, krzyżowanie, zastępowanie najstarszego osobnika
+oraz optymalizacja stałych przez przeszukiwanie kolejnych współrzędnych
+zamiast BFGS.
 
 \section{Dane i metodologia oceny}
 Wykorzystane zostaną trzy syntetyczne zależności fizyczne:
@@ -62,7 +149,7 @@ Jednostkami wyjścia są odpowiednio N, m i m. Dane opisują idealizowane modele
 a nie rzeczywiste pomiary. Każdy problem ma 256 punktów treningowych,
 128 walidacyjnych i 256 testowych, generowanych z niezależnymi ziarnami.
 Wariant zaszumiony zachowuje te same wejścia i dodaje do celu szum
-gaussowski o odchyleniu $0.01\,\mathrm{std}(y_{\mathrm{train,clean}})$.
+gaussowski o odchyleniu $\sigma = 0.01\,\mathrm{std}(y_{\mathrm{train,clean}})$.
 Zapis CSV i manifest zawierają dane oraz parametry generowania.
 
 Plan końcowy przewiduje 36 uruchomień: trzy zależności, dwa warianty danych,
@@ -74,39 +161,82 @@ złożoność, czas i nieudane uruchomienia.
 
 \section{Wyniki}
 Na obecnym etapie rezultatem jest działająca reprezentacja i ewaluacja
-zadanych wyrażeń oraz generator danych. Przykład sprężyny służy sprawdzeniu
-obliczeń i API własnych funkcji; nie jest wynikiem automatycznego odkrycia wzoru.
+zadanych wyrażeń oraz generator danych. Wzór sprężyny obliczony na czystym
+zbiorze testowym daje MSE równe 0. Prawdziwy wzór rzutu pionowego obliczony
+na zaszumionym zbiorze testowym daje MSE $1.95\cdot 10^{-3}$, zgodne z wariancją
+dodanego szumu $\sigma^2 = 2.16\cdot 10^{-3}$. Są to kontrole obliczeń,
+a nie wyniki automatycznego odkrycia wzoru.
+
 Próbne uruchomienia PySR służą weryfikacji środowiska i eksportu wyniku,
 nie zastępują końcowej serii porównawczej. Użyto PySR 2.7.2,
-SymbolicRegression.jl 2.7.2, Julii 1.13.2 i Pythona 3.12.15, jednej populacji,
-20 iteracji i ziarna 0. Wyboru wzoru dokonano według błędu walidacyjnego.
+SymbolicRegression.jl 2.7.2, Julii 1.13.2 i Pythona 3.12.15, jednej populacji
+32 osobników, 20 iteracji, jednego wątku i ziarna 0. Wyboru wzoru dokonano
+według błędu walidacyjnego.
 \begin{center}
-\begin{tabular}{lrr}
+\begin{tabular}{lrrrr}
 \toprule
-Próba & Złożoność & Testowe MSE \\
+Próba & Złożoność & Testowe MSE & Rozgrzewka [s] & Wyszukiwanie [s] \\
 \midrule
-Sprężyna, bez szumu & 5 & $2.82\cdot 10^{-29}$ \\
-Ruch pionowy, bez szumu & 17 & $1.05\cdot 10^{-2}$ \\
-Oscylator, z szumem & 18 & $1.09\cdot 10^{-4}$ \\
+Sprężyna, bez szumu & 5 & $2.82\cdot 10^{-29}$ & 26.4 & 0.56 \\
+Ruch pionowy, bez szumu & 17 & $1.05\cdot 10^{-2}$ & 26.7 & 0.53 \\
+Oscylator, z szumem & 18 & $1.09\cdot 10^{-4}$ & 26.6 & 1.76 \\
 \bottomrule
 \end{tabular}
 \end{center}
-Próba sprężyny zwróciła wzór bliski $2.5x+0.75$. Pojedyncze uruchomienia
-nie stanowią oceny rozrzutu wyników ani dowodu przewagi nad implementacją C++.
-Wyniki końcowej serii zostaną uzupełnione po implementacji wyszukiwania w C++.
+Próba sprężyny zwróciła wzór bliski $2.5x+0.75$. Dla ruchu pionowego
+wzór ma poprawną postać $a\,v_0t + b\,t^2$, lecz współczynniki odbiegają od
+wartości prawdziwych, co wskazuje na zbyt krótkie wyszukiwanie. Dla oscylatora
+błąd testowy jest bliski wariancji szumu ($\sigma^2 = 9.58\cdot 10^{-5}$),
+jednak wzór zawiera zbędne elementy, np.\ $t/t$, i ma złożoność 18 zamiast
+około 8. Rozgrzewka, obejmująca kompilację JIT, trwa wielokrotnie dłużej niż
+właściwe wyszukiwanie, co uzasadnia osobny pomiar kosztu startu. Pojedyncze
+uruchomienia nie stanowią oceny rozrzutu wyników ani dowodu przewagi nad
+implementacją C++. Wyniki końcowej serii zostaną uzupełnione po implementacji
+wyszukiwania w C++.
 
 \section{Dyskusja i ograniczenia}
 Test poprawnego obliczania znanej formuły nie dowodzi skuteczności jej
 wyszukiwania. Ograniczony zestaw danych i liczba powtórzeń nie pozwalają
-na ogólne wnioski o przewadze jednego rozwiązania. Porównanie wymaga
-zapisania wersji zależności, rzeczywistych danych i ustawień uruchomienia.
+na ogólne wnioski o przewadze jednego rozwiązania. Implementacja C++ celowo
+upraszcza PySR: jedna populacja zamiast modelu wysp i przeszukiwanie
+współrzędnych zamiast BFGS, co może wpłynąć na jakość wyników przy tym samym
+budżecie czasu. Porównanie wymaga zapisania wersji zależności, rzeczywistych
+danych i ustawień uruchomienia.
 
 \section{Wnioski i dalsze prace}
 Przygotowana baza będzie rozwijana o algorytm ewolucyjny i ograniczenia
 wyrażeń. Wszystkie funkcje obowiązkowe są planowane do 30 listopada,
 porównanie do 7 grudnia, a pełny pakiet i raport do 14 grudnia 2026 roku.
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
+\bibitem{koza} J. R. Koza, \emph{Genetic Programming: On the Programming of
+Computers by Means of Natural Selection}, MIT Press, 1992.
+\bibitem{schmidt} M. Schmidt, H. Lipson, \emph{Distilling Free-Form Natural
+Laws from Experimental Data}, Science 324(5923), 81--85, 2009.
+\bibitem{virgolin} M. Virgolin, S. P. Pissis, \emph{Symbolic Regression is
+NP-hard}, Transactions on Machine Learning Research, 2022.
+\bibitem{ffx} T. McConaghy, \emph{FFX: Fast, Scalable, Deterministic Symbolic
+Regression Technology}, Genetic Programming Theory and Practice IX,
+Springer, 2011.
+\bibitem{sindy} S. L. Brunton, J. L. Proctor, J. N. Kutz, \emph{Discovering
+Governing Equations from Data by Sparse Identification of Nonlinear Dynamical
+Systems}, PNAS 113(15), 3932--3937, 2016.
+\bibitem{aifeynman} S.-M. Udrescu, M. Tegmark, \emph{AI Feynman: A
+Physics-Inspired Method for Symbolic Regression}, Science Advances 6(16), 2020.
+\bibitem{dsr} B. K. Petersen i in., \emph{Deep Symbolic Regression: Recovering
+Mathematical Expressions from Data via Risk-Seeking Policy Gradients},
+ICLR, 2021.
+\bibitem{nesymres} L. Biggio i in., \emph{Neural Symbolic Regression that
+Scales}, ICML, 2021.
+\bibitem{e2e} P.-A. Kamienny i in., \emph{End-to-End Symbolic Regression with
+Transformers}, NeurIPS, 2022.
+\bibitem{srbench} W. La Cava i in., \emph{Contemporary Symbolic Regression
+Methods and their Relative Performance}, NeurIPS Datasets and Benchmarks, 2021.
+\bibitem{operon} B. Burlacu, G. Kronberger, M. Kommenda, \emph{Operon C++:
+An Efficient Genetic Programming Framework for Symbolic Regression},
+GECCO Companion, 2020.
+\bibitem{real} E. Real, A. Aggarwal, Y. Huang, Q. V. Le, \emph{Regularized
+Evolution for Image Classifier Architecture Search}, AAAI, 2019.
 \bibitem{cranmer} M. Cranmer, \emph{Interpretable Machine Learning for Science
 with PySR and SymbolicRegression.jl}, 2023.
 \url{https://arxiv.org/abs/2305.01582}.

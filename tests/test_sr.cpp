@@ -137,6 +137,32 @@ void expression_tests() {
     throws<std::domain_error>([&] { sr::evaluate(E::unary("square", E::constant(1e308)), functions, {}, {}); });
 }
 
+void custom_function_tests() {
+    using E = sr::Expression;
+    sr::FunctionRegistry functions;
+    functions.add_unary("exp", [](double x) { return std::exp(x); });
+    functions.add_binary("hypot", [](double a, double b) { return std::hypot(a, b); });
+    functions.add_binary("checked", [](double, double b) -> double {
+        if (b < 0) throw std::domain_error("negative argument");
+        return b;
+    });
+    functions.add_loss("absolute_cubed", [](double prediction, double target) {
+        return std::pow(std::abs(prediction - target), 3);
+    });
+    const std::vector<std::string> names{"x"};
+    near(sr::evaluate(E::binary("hypot", E::variable("x"), E::constant(4)), functions, names, std::vector<double>{3}), 5);
+    near(sr::evaluate(E::unary("exp", E::constant(0)), functions, {}, {}), 1);
+    near(sr::evaluate(E::binary("+", E::unary("exp", E::constant(0)), E::constant(1)), functions, {}, {}), 2);
+    throws<std::domain_error>([&] { sr::evaluate(E::unary("exp", E::constant(1000)), functions, {}, {}); });
+    throws<std::domain_error>([&] { sr::evaluate(E::binary("checked", E::constant(0), E::constant(-1)), functions, {}, {}); });
+    throws([&] { sr::evaluate(E::unary("hypot", E::constant(1)), functions, {}, {}); });
+    throws([&] { sr::evaluate(E::binary("exp", E::constant(1), E::constant(1)), functions, {}, {}); });
+    const std::vector<double> predictions{1, 5}, targets{2, 3};
+    near(sr::mean_loss(predictions, targets, functions.loss("absolute_cubed")), 4.5);
+    sr::FunctionRegistry independent;
+    throws([&] { independent.unary("exp"); });
+}
+
 void loss_tests() {
     sr::FunctionRegistry functions;
     const std::vector<double> predictions{1, 5}, targets{2, 3};
@@ -159,8 +185,9 @@ int main() {
         csv_tests();
         generation_tests();
         expression_tests();
+        custom_function_tests();
         loss_tests();
-        std::cout << "CSV, physical data, expression and loss tests passed\n";
+        std::cout << "CSV, physical data, expression, custom function and loss tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "Test failed: " << error.what() << '\n';
         return 1;
