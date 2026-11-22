@@ -3,6 +3,8 @@
 | Plik | Zawartość |
 |---|---|
 | `slides.tex` | Slajdy Beamer (17 slajdów, 16:9) |
+| `slides_agh.tex` | Slajdy Marty w motywie AGH (12 slajdów, 16:9) |
+| `beamerthemeAGH.sty`, `beamercolorthemeAGH.sty`, `beamerthemeAGH.dtx` | Motyw Beamer AGH v2.0 (S. Polak, licencja LPPL 1.3c), wygenerowany z `.dtx` z repozytorium [polaksta/LaTeX](https://github.com/polaksta/LaTeX/tree/master/beamerthemeAGH) |
 | `visualizer.html` | Wizualizacja przebiegu wyszukiwania; otwiera się bez internetu |
 | `jak_czytac_wizualizacje.md` | Wyjaśnienie wizualizacji i algorytmu prostym językiem, na przykładach z przebiegu |
 | `traces.js`, `data/*.csv` | Zapis 5 rzeczywistych uruchomień `sr_search` (wizualizacja, wykresy na slajdach) |
@@ -22,6 +24,8 @@ presentation/make_traces.sh
 # slajdy -> artifacts/presentation/slides.pdf (pierwsza kompilacja pobiera pakiety TeX)
 mkdir -p artifacts/presentation
 XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides.tex
+# slajdy w motywie AGH -> artifacts/presentation/slides_agh.pdf
+XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides_agh.tex
 ```
 
 Kontrola: `ctest --test-dir build-rel` (7/7) i otwarcie `presentation/visualizer.html`

@@ -2,7 +2,8 @@
 % Szablon Overleaf: https://www.overleaf.com/latex/templates/beamer-theme-agh/kdgyvspcfhhz
 % Kompilacja (np. na Overleafie lub lokalnie przez pdflatex):
 %   pdflatex slides_agh.tex  (x2-3 dla numeracji i paska nawigacji)
-% Lokalnie bez motywu AGH (standardowy motyw Madrid), z katalogu głównego repozytorium:
+% Lokalnie z katalogu głównego repozytorium (motyw AGH v2.0 leży obok: beamerthemeAGH.sty,
+% beamercolorthemeAGH.sty, źródło beamerthemeAGH.dtx; bez nich użyty zostanie motyw Madrid):
 %   XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides_agh.tex
 % Wszystkie dane wykresów są osadzone w pliku — wystarczy sam plik .tex w projekcie z beamerthemeAGH.
 \documentclass[
@@ -97,13 +98,13 @@
 % ---------------------------------------------------------------------------- 2
 \begin{frame}{Stan harmonogramu i zakres dzisiejszej prezentacji}
   \begin{columns}[T]
-    \begin{column}{0.56\textwidth}
-      \footnotesize
+    \begin{column}{0.55\textwidth}
+      \scriptsize
       \begin{tabular}{@{}l l c@{}}
         \toprule
         Termin & Etap & Stan \\
         \midrule
-        19.10 & środowisko C++23/CMake, dane, próba PySR & \textcolor{aghgreen}{\checkmark} \\
+        19.10 & C++23/CMake, dane, próba PySR & \textcolor{aghgreen}{\checkmark} \\
         26.10 & drzewa wyrażeń, CSV, rejestr funkcji & \textcolor{aghgreen}{\checkmark} \\
         \textbf{09.11} & \textbf{wyszukiwanie ewolucyjne} & \textcolor{aghgreen}{\checkmark}\,* \\
         \textbf{16.11} & \textbf{MVP: stałe, hall of fame, predykcja} & \textcolor{aghgreen}{\checkmark}\,* \\
@@ -114,7 +115,7 @@
       \end{tabular}\par\medskip
       {\scriptsize\color{aghmuted}* etapy 09.11 i 16.11 zrealizowane razem z 23.11 --- ograniczenia wymagają działającej pętli wyszukiwania. Plan od 30.11 bez zmian.}
     \end{column}
-    \begin{column}{0.40\textwidth}
+    \begin{column}{0.41\textwidth}
       \textbf{Endpointy i elementy do pokazania:}
       \begin{itemize}\footnotesize
         \item \textbf{09.11:} \texttt{sr::Variation}, selekcja turniejowa, cykl ewolucji, reguły stopu, determinizm
@@ -167,8 +168,8 @@
 \begin{frame}{Etap 09.11: Reprezentacja drzewa i operatory wariacji}
   \begin{columns}[T]
     \begin{column}{0.46\textwidth}
-      \textbf{Sześć mutacji + krzyżowanie (\texttt{Variation}):}
-      \footnotesize
+      {\small\textbf{Sześć mutacji + krzyżowanie} (\texttt{Variation}):}\par\smallskip
+      \scriptsize
       \begin{tabular}{@{}ll@{}}
         \toprule
         Operacja & Przykład \\
@@ -179,7 +180,7 @@
         \texttt{replace\_subtree} & losowe poddrzewo w limitach \\
         \texttt{insert\_node} & $a \to \cos(a)$ \\
         \texttt{delete\_node} & $a + b \to a$ \\
-        \texttt{crossover} & wymiana poddrzew 2 rodziców \\
+        \texttt{crossover} & wymiana poddrzew \\
         \bottomrule
       \end{tabular}\par\medskip
       {\scriptsize\color{aghmuted}Węzły adresowane w kolejności \emph{preorder} (\texttt{subtree}, \texttt{replaced}); edycja zwraca nowe drzewo bez zmiany oryginału.}
@@ -279,34 +280,35 @@
     \begin{column}{0.56\textwidth}
 \begin{lstlisting}
 sr::FunctionRegistry functions;
-functions.add_unary ("exp",
+functions.add_unary("exp",
     [](double x) { return std::exp(x); });
 functions.add_binary("hypot",
-    [](double a, double b) { return std::hypot(a, b); });
-functions.add_loss  ("huber", [](double p, double y) {
-    const double e = std::abs(p - y);
-    return e <= 1.0 ? 0.5 * e * e : e - 0.5;
-});
+    [](double a, double b) {
+        return std::hypot(a, b); });
+functions.add_loss("huber",
+    [](double p, double y) {
+        const double e = std::abs(p - y);
+        return e <= 1 ? 0.5*e*e : e - 0.5; });
 
 sr::SearchOptions options;
 options.unary_operators  = {"exp"};
-options.binary_operators = {"+", "-", "*", "hypot"};
-options.loss = "huber";   // petla zna tylko nazwy
-const auto result = sr::fit(forces, options, functions);
+options.binary_operators = {"+","-","*","hypot"};
+options.loss = "huber";  // tylko nazwy
+auto result = sr::fit(forces, options, functions);
 \end{lstlisting}
     \end{column}
     \begin{column}{0.41\textwidth}
-      \textbf{Wynik uruchomienia \texttt{sr\_custom}:}
+      \textbf{Wynik (\texttt{sr\_custom}):}
       \begin{itemize}\footnotesize
         \item zadanie: wypadkowa sił $|F|$ z $(F_x, F_y)$
         \item znaleziono: \textcolor{aghgreen}{\textbf{\texttt{hypot(Fy, Fx)}}} (złożoność 3, strata Hubera = \textbf{0})
         \item pętla wyszukiwania \textbf{bez żadnych zmian}
       \end{itemize}
-      \medskip
+      \smallskip
       \textbf{Walidacja i błędy:}
       \begin{itemize}\footnotesize
-        \item \texttt{sr::validate()} odrzuca 27 błędnych konfiguracji przed startem (nieznana nazwa, zła arność, duplikat)
-        \item wyjątek \texttt{domain\_error} w funkcji użytkownika (np. \texttt{exp(1000)}) $\Rightarrow$ strata $+\infty$
+        \item \texttt{sr::validate()} odrzuca złą konfigurację przed startem (nieznana nazwa, zła arność, duplikat)
+        \item błąd dziedziny w funkcji użytkownika $\Rightarrow$ strata $+\infty$
       \end{itemize}
     \end{column}
   \end{columns}
