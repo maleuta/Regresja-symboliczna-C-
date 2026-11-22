@@ -2,17 +2,24 @@
 % Szablon Overleaf: https://www.overleaf.com/latex/templates/beamer-theme-agh/kdgyvspcfhhz
 % Kompilacja (np. na Overleafie lub lokalnie przez pdflatex):
 %   pdflatex slides_agh.tex  (x2-3 dla numeracji i paska nawigacji)
+% Lokalnie bez motywu AGH (standardowy motyw Madrid), z katalogu głównego repozytorium:
+%   XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides_agh.tex
 % Wszystkie dane wykresów są osadzone w pliku — wystarczy sam plik .tex w projekcie z beamerthemeAGH.
 \documentclass[
   polish,
   aspectratio=169,
 ]{beamer}
 
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
+\usepackage{iftex}
+\ifPDFTeX  % Overleaf (pdflatex): jak dotychczas
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+\else      % XeTeX/LuaTeX, np. lokalny Tectonic: czcionki Unicode
+  \usepackage{fontspec}
+\fi
 \usepackage{babel}
 \makeatletter
-\@ifclasswith{beamer}{polish}{\usepackage{polski}}{}
+\ifPDFTeX\@ifclasswith{beamer}{polish}{\usepackage{polski}}{}\fi
 \makeatother
 
 \usepackage{booktabs}
@@ -33,8 +40,9 @@
 \definecolor{aghwash}{HTML}{F7ECEE}
 \definecolor{aghwashg}{HTML}{EAF3EE}
 
+% Motyw AGH pochodzi z szablonu Overleaf; bez niego (np. lokalnie) użyj standardowego motywu.
 \mode<beamer>{
-  \usetheme[margins=2em]{AGH}
+  \IfFileExists{beamerthemeAGH.sty}{\usetheme[margins=2em]{AGH}}{\usetheme{Madrid}}
   %\usetheme[dark, margins=2em]{AGH} % wersja ciemna na zaciemnioną salę
 }
 
@@ -397,7 +405,7 @@ const auto result = sr::fit(forces, options, functions);
       \end{tikzpicture}
     \end{column}
     \begin{column}{0.45\textwidth}
-      \footnotesize
+      \scriptsize
       \begin{tabular}{@{}llcc@{}}
         \toprule
         Zależność & Wariant & Odtw. & Złoż. \\
