@@ -13,7 +13,7 @@ Last updated: 21.11.2026 (state for the 23.11 milestone and presentation).
 
 ## 1. Status against the semester plan
 
-| Date | Milestone | State | Where |
+| Date | Milestone | State | Where | 
 |---|---|---|---|
 | 19.10 | C++23/CMake project, PySR pilot, data specification, report outline | done | `CMakeLists.txt`, `baseline/`, `data/SPEC.md`, `report/` |
 | 26.10 | Expression trees, CSV, evaluation, operator/loss registry | done | `expression.*`, `dataset.*` |
@@ -612,7 +612,7 @@ describe. Nothing in it is mocked.
 | File | Role |
 |---|---|
 | `make_traces.sh` | builds Release, generates data, runs `sr_search` five times with `--trace` and `--output`, writes `traces.js` and `data/*.csv` |
-| `traces.js` | `window.SR_TRACES = [...]`: five traces (spring, projectile, constrained projectile with `pow`, oscillator, and a deliberately included failed run) |
+| `traces.js` | `window.SR_TRACES = [...]`: five traces, each with `id` and the true law (spring, projectile, constrained projectile with `pow`, oscillator, and a deliberately included failed run) |
 | `visualizer.html` | self-contained viewer (no CDN, works from `file://` and offline) |
 | `slides.tex` | Beamer deck, 17 slides; pgfplots charts read `data/*.csv` |
 | `README.md` | preparation commands, timed speaker script, live-demo runbook, expected questions (Polish) |
@@ -620,24 +620,59 @@ describe. Nothing in it is mocked.
 `traces.js` is a script rather than JSON because browsers block `fetch()` of local
 files. A `<script src>` works from `file://`.
 
-**The viewer** has three sections:
-1. *One cycle*: the six steps of a cycle (tournament, variation, constraints,
-   evaluation, constants, replacement) light up one after another for a recorded
-   event. Parent, second parent (crossover) and child are drawn as trees.
-   "Only new records" filters to events that improved the best loss.
-2. *Run*: a slider or play button over snapshots drives three linked charts:
-   - the best train loss versus offspring (log scale);
-   - the Pareto front over the population cloud (complexity versus log loss);
-   - the fit of the lowest-loss formula: data and curve for one feature, or
-     predicted versus observed for two.
-3. *Result*: statistics and the final front table, with the selected model marked.
+**The viewer** explains itself to someone who has never seen the algorithm:
+* **Header.** An intro box summarizes the cycle in one line ("pick parent → change →
+  check limits → compute error → insert ↺"). A run box shows:
+  - the data;
+  - the **true law** (added to each trace by `make_traces.sh`, never seen by the search);
+  - the operators and population settings;
+  - the found formula.
+* **Section 1, one cycle step by step.** The **Step** button (→) walks through the six
+  stages of a recorded cycle (tournament, change, limits, evaluation, constants,
+  replacement). An explanation panel describes each stage with the numbers of that
+  cycle:
+  - the tournament size and win probability;
+  - what the specific mutation did;
+  - how many proposals the limits rejected, and the node count and depth against the limits;
+  - whether the child is better or worse than its parent and why a worse child is kept;
+  - whether constants were optimized;
+  - which population slot was replaced and why (ring of the oldest members).
+
+  The child appears from stage 2 on. A population strip shows the replaced slot and
+  the next oldest slots. Shift+→ moves to the next cycle and **Auto** plays the
+  cycles.
+* **What changed.** `markDiff(parent, child, operation)` walks both trees top-down
+  until the first difference. Every mutation and crossover edits one place, so this
+  is the whole change. The operation name selects the interpretation:
+  - `insert_node`: the new node and its new leaf are marked; the wrapped original is
+    outlined dashed;
+  - `delete_node`: the removed node and its dropped children are marked;
+  - `change_operator`: only the renamed node;
+  - other mutations and crossover: the replaced subtree in parent and child, with a
+    shaded box; for crossover, the donated subtree is found in the second parent by
+    structural equality and marked too.
+* **Tree drawing.** The layout is width-aware: each leaf slot is as wide as its label
+  and parents are centred over their children. Edges run from the bottom edge of a
+  parent to the top edge of a child, and node fills are opaque, so no line crosses a
+  label. Wide trees scroll horizontally instead of shrinking.
+* **Section 2, the whole run.** A slider or play button over snapshots drives three
+  linked charts, each with a "how to read" note:
+  - the best train loss versus offspring (log scale);
+  - the Pareto front over the population cloud;
+  - the fit of the lowest-loss formula: data and curve for one feature, or predicted
+    versus observed for two.
+
+  A live table lists the current Pareto front with formulas.
+* **Section 3, the result.** The true law next to the selected formula, the test
+  error, statistics and the final front table. A glossary at the bottom defines
+  population, tournament, mutation, crossover, limits, MSE, complexity, Pareto front
+  and iteration.
 
 Implementation notes:
 * It parses `Expression::to_string()` output with a small recursive-descent parser.
 * It evaluates formulas in JS for the fit chart, using built-in operators plus `hypot`
   and `exp`.
 * It prints infix formulas with Polish decimal commas.
-* It lays out trees by assigning leaves consecutive x positions and centring parents.
 * Charts are hand-written SVG and follow the data-viz rules:
   - one axis per chart;
   - a validated blue/orange palette in light and dark;
@@ -645,7 +680,10 @@ Implementation notes:
   - hover tooltips;
   - text never in series colours.
 * Exact zero losses are drawn at a 1e-32 floor.
-* Keyboard: ←/→ step cycles, space plays the run.
+* Keyboard: → step, Shift+→ next cycle, ← previous cycle, space plays the run.
+* Deep links set the state, e.g. `visualizer.html#run=1&event=15&stage=1&snap=40`
+  (indices from 0), so a presenter can jump to a prepared example. Headless Chrome
+  screenshots use the same mechanism.
 
 The slides cite only measured numbers. Their plots and the visualizer are
 generated from the same runs, and `make_traces.sh` reproduces them

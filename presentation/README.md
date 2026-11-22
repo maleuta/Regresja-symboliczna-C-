@@ -65,13 +65,22 @@ Terminal w katalogu repozytorium, duża czcionka. Wszystkie polecenia trwają po
    kompilacja Debug: przebieg jest deterministyczny.
 3. `build-rel/sr_constraints` — komunikaty reguł oraz „Admissible … 69 of 69”.
 4. `build-rel/sr_custom` — na końcu `hypot(Fy, Fx)` ze stratą Hubera 0.
-5. `presentation/visualizer.html`:
-   - **sekcja 1:** klawiszem `→` przejść 3–4 cykle; kroki podświetlają się po kolei. Pokazać jedno krzyżowanie
-     (trzy drzewa), a potem zaznaczyć „tylko nowe rekordy”;
-   - **sekcja 2:** wybrać „Rzut pionowy (ziarno 2)”, nacisnąć `spacja` (odtwarzanie ok. 9 s). Front Pareta
-     schodzi w dół na złożoności 7, a punkty leżą na przekątnej;
+5. `presentation/visualizer.html` (wybrać „Rzut pionowy … ziarno 2”):
+   - **ramka u góry:** dane, prawdziwy wzór (algorytm go nie zna) i znaleziony wzór;
+   - **sekcja 1:** przycisk **Krok** (albo `→`) przechodzi przez 6 etapów jednego cyklu, a ramka z opisem
+     tłumaczy każdy z nich. Po zmianie pomarańczowa ramka pokazuje, co się zmieniło. `Shift`+`→` przechodzi
+     do następnego cyklu, **Auto** odtwarza cykle samo;
+   - **sekcja 2:** `spacja` (odtwarzanie ok. 9 s). Błąd spada skokami, front Pareta schodzi w dół na
+     złożoności 7, a punkty układają się na przekątnej. Tabela „Front Pareta w tej chwili” zmienia się na bieżąco;
    - wybrać „Przypadek nieudany” i pokazać, że front utknął;
-   - **sekcja 3:** tabela frontu z zaznaczonym wybranym wzorem.
+   - **sekcja 3:** prawdziwy wzór obok znalezionego, błąd na danych testowych, tabela frontu.
+
+   Gotowe linki (wkleić po `visualizer.html`, indeksy od 0):
+   - `#run=1&event=5&stage=1` — wstawienie węzła (drzewo rośnie);
+   - `#run=1&event=8&stage=1` — zmiana operatora × → +;
+   - `#run=1&event=15&stage=1` — krzyżowanie (fragment z drugiego rodzica);
+   - `#run=1&event=6&stage=5` — usunięcie węzła i zastąpienie najstarszego w populacji;
+   - `#run=4&snap=200` — nieudany przebieg, koniec.
 
 Plan awaryjny: jeżeli terminal zawiedzie, wystarczy sama wizualizacja (dane są zapisane),
 a jeżeli zawiedzie przeglądarka, slajdy 6, 8 i 14 pokazują te same uruchomienia.
