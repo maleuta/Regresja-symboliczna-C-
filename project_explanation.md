@@ -616,6 +616,7 @@ describe. Nothing in it is mocked.
 | `visualizer.html` | self-contained viewer (no CDN, works from `file://` and offline) |
 | `slides.tex` | Beamer deck, 17 slides; pgfplots charts read `data/*.csv` |
 | `README.md` | preparation commands, timed speaker script, live-demo runbook, expected questions (Polish) |
+| `jak_czytac_wizualizacje.md` | plain-language Polish guide to the viewer and the algorithm, walked through with real cycles and numbers from the projectile run |
 
 `traces.js` is a script rather than JSON because browsers block `fetch()` of local
 files. A `<script src>` works from `file://`.

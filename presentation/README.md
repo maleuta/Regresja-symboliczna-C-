@@ -4,6 +4,7 @@
 |---|---|
 | `slides.tex` | Slajdy Beamer (17 slajdów, 16:9) |
 | `visualizer.html` | Wizualizacja przebiegu wyszukiwania; otwiera się bez internetu |
+| `jak_czytac_wizualizacje.md` | Wyjaśnienie wizualizacji i algorytmu prostym językiem, na przykładach z przebiegu |
 | `traces.js`, `data/*.csv` | Zapis 5 rzeczywistych uruchomień `sr_search` (wizualizacja, wykresy na slajdach) |
 | `make_traces.sh` | Odtwarza `traces.js` i `data/` z uruchomień programu |
 
