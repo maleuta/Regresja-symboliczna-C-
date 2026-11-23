@@ -49,6 +49,13 @@ struct Candidate {
     std::size_t complexity() const { return expression.size(); }
 };
 
+// One tournament: the drawn contestants (population indices, best train loss first) and
+// the position of the winner among them.
+struct TournamentDraw {
+    std::vector<std::size_t> contestants;
+    std::size_t winner = 0;
+};
+
 // One evolution cycle, reported before the child replaces the oldest member.
 // References are valid only during the callback.
 struct OffspringEvent {
@@ -57,10 +64,15 @@ struct OffspringEvent {
     std::string operation;           // mutation name, "crossover" or "parent_copy"
     const Candidate& parent;
     const Candidate* second_parent;  // crossover only
+    const Candidate& proposal;       // admissible variation (or parent copy) before constant optimization
     const Candidate& child;          // after the optional constant optimization
     std::size_t inadmissible;        // proposals rejected by the constraints for this child
     bool optimized;                  // constants of the child were optimized
     std::size_t replaced;            // population index of the replaced (oldest) member
+    const std::vector<Candidate>& population;     // before the replacement
+    const TournamentDraw& tournament;             // selected parent
+    const TournamentDraw* second_tournament;      // selected second parent, crossover only
+    bool hall_of_fame_updated;                    // child became the best of its complexity
 };
 
 // State after initialization (iterations == 0) and after each completed iteration,
@@ -70,7 +82,8 @@ struct IterationSnapshot {
     std::size_t offspring;    // offspring created so far
     double seconds;
     const std::vector<Candidate>& population;
-    std::vector<Candidate> front;  // current Pareto front (train loss)
+    std::vector<Candidate> front;         // current Pareto front (train loss)
+    std::vector<Candidate> hall_of_fame;  // best member of every complexity seen, ascending complexity
 };
 
 // Optional hooks for tracing and visualization. They consume no random numbers, so a run

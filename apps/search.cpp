@@ -2,6 +2,7 @@
 #include "sr/benchmarks.hpp"
 #include "sr/search.hpp"
 
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <filesystem>
@@ -10,6 +11,8 @@
 #include <iostream>
 #include <limits>
 #include <locale>
+#include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -102,11 +105,29 @@ std::string json_string(const std::string& text) {
 }
 
 // Compact record of the search used by progress.csv and the JSON trace.
+struct Refinement {  // hall-of-fame entry improved by the end-of-iteration constant optimization
+    std::size_t complexity;
+    double before, after;
+    std::string expression;
+};
+
 struct SnapshotRecord {
     std::size_t iterations, offspring;
     double seconds;
     std::vector<std::pair<std::size_t, double>> population;  // complexity, train loss
     std::vector<sr::Candidate> front;
+    std::vector<Refinement> refined;
+    std::map<std::string, std::size_t> counts;  // operations and outcomes of the offspring since the previous snapshot
+};
+
+struct Scored {  // expression with its train loss
+    std::string expression;
+    double loss;
+};
+
+struct DrawRecord {
+    std::vector<Scored> contestants;  // best first
+    std::size_t winner = 0;
 };
 
 struct EventRecord {
@@ -114,6 +135,14 @@ struct EventRecord {
     std::string operation, parent, second, child;
     double parent_loss, child_loss;
     bool optimized, new_best;
+    // Details for the pipeline view.
+    DrawRecord tournament;
+    std::optional<DrawRecord> second_tournament;
+    std::vector<double> mutation_probabilities;  // per Variation::Mutation, given that a mutation is chosen
+    Scored proposal;                             // before constant optimization
+    std::optional<Scored> hall_before;           // previous hall-of-fame entry of the child's complexity
+    bool hall_updated;
+    Scored removed;                              // replaced oldest member
 };
 
 std::string join(const std::vector<std::string>& items) {
@@ -212,29 +241,87 @@ int main(int argc, char** argv) {
         // Observers only record; they do not change the run (same seed -> same result).
         std::vector<SnapshotRecord> snapshots;
         std::vector<EventRecord> events;
+        std::vector<Scored> initial_population, initial_hall;
+        std::map<std::size_t, Scored> hall_mirror;    // hall of fame as known from the events and snapshots
+        std::map<std::string, std::size_t> counts;    // offspring statistics since the last snapshot
         double best_so_far = std::numeric_limits<double>::infinity();
+        const auto scored = [](const sr::Candidate& candidate) {
+            return Scored{candidate.expression.to_string(), candidate.train_loss};
+        };
         if (output || trace_path) {
             options.observer.on_iteration = [&](const sr::IterationSnapshot& snapshot) {
-                SnapshotRecord record{snapshot.iterations, snapshot.offspring, snapshot.seconds, {}, snapshot.front};
+                SnapshotRecord record{snapshot.iterations, snapshot.offspring, snapshot.seconds, {}, snapshot.front, {},
+                                      std::move(counts)};
+                counts.clear();
                 for (const auto& member : snapshot.population) {
                     record.population.emplace_back(member.complexity(), member.train_loss);
+                }
+                if (snapshot.offspring == 0) {
+                    for (const auto& member : snapshot.population) initial_population.push_back(scored(member));
+                    for (const auto& entry : snapshot.hall_of_fame) initial_hall.push_back(scored(entry));
+                }
+                // Entries that differ from the mirror were improved by the end-of-iteration optimization.
+                for (const auto& entry : snapshot.hall_of_fame) {
+                    const auto found = hall_mirror.find(entry.complexity());
+                    if (found != hall_mirror.end() && entry.train_loss < found->second.loss) {
+                        record.refined.push_back({entry.complexity(), found->second.loss, entry.train_loss,
+                                                  entry.expression.to_string()});
+                    }
+                    hall_mirror[entry.complexity()] = scored(entry);
                 }
                 if (!snapshot.front.empty()) best_so_far = std::min(best_so_far, snapshot.front.back().train_loss);
                 snapshots.push_back(std::move(record));
             };
         }
         if (trace_path) {
-            // Keep the first cycles (to show the mechanics) and every cycle that improved the best loss.
+            std::optional<sr::Variation> variation;  // created once the search has validated the options
+            const auto draw = [&](const sr::TournamentDraw& tournament, const sr::OffspringEvent& event) {
+                DrawRecord record{{}, tournament.winner};
+                for (const auto index : tournament.contestants) record.contestants.push_back(scored(event.population[index]));
+                return record;
+            };
+            // Keep the whole first iteration (to show the mechanics) and every cycle that improved the best loss.
             options.observer.on_offspring = [&](const sr::OffspringEvent& event) {
                 const bool new_best = event.child.train_loss < best_so_far;
                 if (new_best) best_so_far = event.child.train_loss;
-                if (event.cycle >= 60 && !new_best) return;
-                if (events.size() >= 400) return;
+                ++counts[event.operation];
+                if (event.optimized) ++counts["optimized"];
+                if (event.hall_of_fame_updated) ++counts["hall_updated"];
+                if (new_best) ++counts["new_best"];
+                if (!std::isfinite(event.child.train_loss)) ++counts["undefined"];
+                counts["inadmissible"] += event.inadmissible;
+
+                const auto found = hall_mirror.find(event.child.complexity());
+                std::optional<Scored> hall_before;
+                if (found != hall_mirror.end()) hall_before = found->second;
+                if (event.hall_of_fame_updated) hall_mirror[event.child.complexity()] = scored(event.child);
+
+                if ((event.cycle >= options.population_size && !new_best) || events.size() >= 400) return;
+                if (!variation) variation.emplace(options, options.variables.empty() ? data[0].feature_names : options.variables);
+                std::vector<double> probabilities;
+                if (!event.second_parent) {
+                    const auto& w = options.mutation_weights;
+                    const std::array weights{w.perturb_constant, w.change_operator, w.replace_leaf,
+                                             w.replace_subtree, w.insert_node, w.delete_node};
+                    using M = sr::Variation::Mutation;
+                    const std::array kinds{M::perturb_constant, M::change_operator, M::replace_leaf,
+                                           M::replace_subtree, M::insert_node, M::delete_node};
+                    double total = 0;
+                    for (std::size_t k = 0; k < kinds.size(); ++k) {
+                        probabilities.push_back(variation->applicable(event.parent.expression, kinds[k]) ? weights[k] : 0);
+                        total += probabilities.back();
+                    }
+                    for (auto& p : probabilities) p = total > 0 ? p / total : 0;
+                }
                 events.push_back({event.cycle, event.iteration, event.inadmissible, event.replaced, event.operation,
                                   event.parent.expression.to_string(),
                                   event.second_parent ? event.second_parent->expression.to_string() : std::string{},
                                   event.child.expression.to_string(), event.parent.train_loss, event.child.train_loss,
-                                  event.optimized, new_best});
+                                  event.optimized, new_best, draw(event.tournament, event),
+                                  event.second_tournament ? std::optional(draw(*event.second_tournament, event))
+                                                          : std::nullopt,
+                                  std::move(probabilities), scored(event.proposal), hall_before,
+                                  event.hall_of_fame_updated, scored(event.population[event.replaced])});
             };
         }
 
@@ -336,12 +423,44 @@ int main(int argc, char** argv) {
                   << ",\"unary\":" << strings(options.unary_operators)
                   << ",\"binary\":" << strings(options.binary_operators) << ",\"loss\":" << json_string(options.loss)
                   << ",\"max_size\":" << options.constraints.max_size
-                  << ",\"max_depth\":" << options.constraints.max_depth << "},\"snapshots\":[";
+                  << ",\"max_depth\":" << options.constraints.max_depth
+                  << ",\"optimize_probability\":" << json_number(options.optimize_probability)
+                  << ",\"max_attempts\":" << options.max_attempts
+                  << ",\"initial_max_size\":" << options.initial_max_size
+                  << ",\"constant_scale\":" << json_number(options.constant_scale)
+                  << ",\"selection_tolerance\":" << json_number(options.selection_tolerance)
+                  << ",\"mutation_weights\":[" << json_number(options.mutation_weights.perturb_constant) << ','
+                  << json_number(options.mutation_weights.change_operator) << ','
+                  << json_number(options.mutation_weights.replace_leaf) << ','
+                  << json_number(options.mutation_weights.replace_subtree) << ','
+                  << json_number(options.mutation_weights.insert_node) << ','
+                  << json_number(options.mutation_weights.delete_node) << "]}";
+            trace << ",\"data_sizes\":[";
+            for (std::size_t i = 0; i < data.size(); ++i) trace << (i ? "," : "") << data[i].targets.size();
+            const auto scored_json = [](const Scored& item) {
+                return "[" + json_string(item.expression) + "," + json_number(item.loss) + "]";
+            };
+            const auto scored_list = [&](const std::vector<Scored>& items) {
+                std::string text = "[";
+                for (std::size_t i = 0; i < items.size(); ++i) text += (i ? "," : "") + scored_json(items[i]);
+                return text + "]";
+            };
+            trace << "],\"initial_population\":" << scored_list(initial_population)
+                  << ",\"initial_hall\":" << scored_list(initial_hall) << ",\"snapshots\":[";
             for (std::size_t i = 0; i < snapshots.size(); ++i) {
                 const auto& snapshot = snapshots[i];
                 trace << (i ? "," : "") << "{\"iterations\":" << snapshot.iterations << ",\"offspring\":"
                       << snapshot.offspring << ",\"seconds\":" << json_number(snapshot.seconds)
-                      << ",\"front\":" << candidates(snapshot.front) << ",\"population\":[";
+                      << ",\"front\":" << candidates(snapshot.front) << ",\"counts\":{";
+                std::size_t k = 0;
+                for (const auto& [name, count] : snapshot.counts) trace << (k++ ? "," : "") << json_string(name) << ':' << count;
+                trace << "},\"refined\":[";
+                for (std::size_t j = 0; j < snapshot.refined.size(); ++j) {
+                    const auto& r = snapshot.refined[j];
+                    trace << (j ? "," : "") << "{\"c\":" << r.complexity << ",\"before\":" << json_number(r.before)
+                          << ",\"after\":" << json_number(r.after) << ",\"expr\":" << json_string(r.expression) << '}';
+                }
+                trace << "],\"population\":[";
                 for (std::size_t j = 0; j < snapshot.population.size(); ++j) {
                     trace << (j ? "," : "") << '[' << snapshot.population[j].first << ','
                           << json_short(snapshot.population[j].second) << ']';
@@ -358,7 +477,20 @@ int main(int argc, char** argv) {
                       << ",\"child_loss\":" << json_number(event.child_loss)
                       << ",\"inadmissible\":" << event.inadmissible << ",\"optimized\":"
                       << (event.optimized ? "true" : "false") << ",\"replaced\":" << event.replaced
-                      << ",\"new_best\":" << (event.new_best ? "true" : "false") << '}';
+                      << ",\"new_best\":" << (event.new_best ? "true" : "false");
+                const auto draw_json = [&](const DrawRecord& d) {
+                    return "{\"c\":" + scored_list(d.contestants) + ",\"w\":" + std::to_string(d.winner) + "}";
+                };
+                trace << ",\"t1\":" << draw_json(event.tournament)
+                      << ",\"t2\":" << (event.second_tournament ? draw_json(*event.second_tournament) : "null")
+                      << ",\"p\":[";
+                for (std::size_t j = 0; j < event.mutation_probabilities.size(); ++j) {
+                    trace << (j ? "," : "") << json_short(event.mutation_probabilities[j]);
+                }
+                trace << "],\"proposal\":" << scored_json(event.proposal)
+                      << ",\"hall_before\":" << (event.hall_before ? scored_json(*event.hall_before) : "null")
+                      << ",\"hall_updated\":" << (event.hall_updated ? "true" : "false")
+                      << ",\"removed\":" << scored_json(event.removed) << '}';
             }
             trace << "],\"result\":{\"equation\":" << json_string(best.expression.to_string())
                   << ",\"complexity\":" << best.complexity() << ",\"train_loss\":" << json_number(best.train_loss)

@@ -5,7 +5,9 @@
 | `slides.tex` | Slajdy Beamer (17 slajdów, 16:9) |
 | `slides_agh.tex` | Slajdy Marty w motywie AGH (12 slajdów, 16:9) |
 | `beamerthemeAGH.sty`, `beamercolorthemeAGH.sty`, `beamerthemeAGH.dtx` | Motyw Beamer AGH v2.0 (S. Polak, licencja LPPL 1.3c), wygenerowany z `.dtx` z repozytorium [polaksta/LaTeX](https://github.com/polaksta/LaTeX/tree/master/beamerthemeAGH) |
+| `pipeline.html` | Mapa całego procesu krok po kroku: pomiary → losowy start → pętla ewolucji → wybór wzoru; każda karta pokazuje prawdziwe dane z przebiegu |
 | `visualizer.html` | Wizualizacja przebiegu wyszukiwania; otwiera się bez internetu |
+| `common.js` | Wspólny kod obu stron: wzory, zaznaczanie zmian, rysowanie drzew |
 | `jak_czytac_wizualizacje.md` | Wyjaśnienie wizualizacji i algorytmu prostym językiem, na przykładach z przebiegu |
 | `traces.js`, `data/*.csv` | Zapis 5 rzeczywistych uruchomień `sr_search` (wizualizacja, wykresy na slajdach) |
 | `make_traces.sh` | Odtwarza `traces.js` i `data/` z uruchomień programu |
@@ -28,7 +30,7 @@ XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/p
 XDG_CACHE_HOME="$PWD/.cache" .tools/tectonic/tectonic --untrusted -o artifacts/presentation presentation/slides_agh.tex
 ```
 
-Kontrola: `ctest --test-dir build-rel` (7/7) i otwarcie `presentation/visualizer.html`
+Kontrola: `ctest --test-dir build-rel` (7/7) i otwarcie `presentation/pipeline.html` oraz `presentation/visualizer.html`
 w przeglądarce (Firefox/Chrome, plik lokalny). Jeżeli przeglądarka blokuje skrypty z pliku,
 można uruchomić `python3 -m http.server 8765 --directory presentation` i otworzyć
 `http://localhost:8765/visualizer.html`. Warto mieć PDF slajdów na pendrivie.
@@ -70,7 +72,24 @@ Terminal w katalogu repozytorium, duża czcionka. Wszystkie polecenia trwają po
    kompilacja Debug: przebieg jest deterministyczny.
 3. `build-rel/sr_constraints` — komunikaty reguł oraz „Admissible … 69 of 69”.
 4. `build-rel/sr_custom` — na końcu `hypot(Fy, Fx)` ze stratą Hubera 0.
-5. `presentation/visualizer.html` (wybrać „Rzut pionowy … ziarno 2”):
+5. `presentation/pipeline.html`: mapa całego procesu na przebiegu „Sprężyna”. Strona sama dopasowuje się
+   do ekranu (najlepiej pełny ekran, `F11`). Na każdym kroku podświetla się jedna karta i strzałka, która
+   do niej prowadzi, a pasek na dole mówi, co się dzieje, na liczbach z tego cyklu.
+   Sterowanie: `→`/`←` krok, `C` następny cykl, `R` następny rekord, `I` koniec iteracji, `E` wynik,
+   `spacja` odtwarzanie.
+
+   Proponowana ścieżka (wkleić po `pipeline.html`, indeksy od 0):
+   - `#run=spring&step=0`: pomiary (trzy zbiory, prawdziwe prawo zasłonięte);
+   - `#run=spring&step=2`: losowa populacja startowa (64 wzory, kolor = błąd);
+   - `#run=spring&step=4`: pierwszy cykl; dalej `→` przez turniej, mutację, limity, ocenę, liczby,
+     hall of fame i wymianę;
+   - `#run=spring&step=12`: krzyżowanie;
+   - `#run=spring&step=172`: cykl 24, pierwszy duży rekord (nowe poddrzewo + dostrojenie liczb);
+   - `#run=spring&step=461`: koniec 3. iteracji, dostrojenie w hall of fame daje dokładny wzór;
+   - `#run=spring&step=513`: front Pareta, potem `→` wybór, test i wynik z odsłoniętym prawem;
+   - `#run=constrained&step=76`: limity odrzucają propozycję (strzałka „nowa próba”);
+   - `#run=projectile&step=259`: wzór z błędem ∞ (niedozwolone działanie).
+6. `presentation/visualizer.html` (wybrać „Rzut pionowy … ziarno 2”):
    - **ramka u góry:** dane, prawdziwy wzór (algorytm go nie zna) i znaleziony wzór;
    - **sekcja 1:** przycisk **Krok** (albo `→`) przechodzi przez 6 etapów jednego cyklu, a ramka z opisem
      tłumaczy każdy z nich. Po zmianie pomarańczowa ramka pokazuje, co się zmieniło. `Shift`+`→` przechodzi

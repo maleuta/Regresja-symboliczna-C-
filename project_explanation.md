@@ -483,19 +483,38 @@ struct SearchObserver {
 };
 ```
 
-* `OffspringEvent` carries the cycle number, the operation (`insert_node`,
-  `crossover`, `parent_copy`, …), parent(s), child, the number of rejected
-  proposals, whether constants were optimized, and the replaced slot. It is
-  reported just before the child replaces the oldest member, so all references
+* `OffspringEvent` carries:
+  - the cycle number and the operation (`insert_node`, `crossover`, `parent_copy`, …);
+  - parent(s) and the child;
+  - `proposal`: the child before constant optimization. Without optimization it is
+    the same object as `child`;
+  - the number of rejected proposals, whether constants were optimized, and the
+    replaced slot;
+  - `population`: the population before the replacement;
+  - `tournament` (and `second_tournament` for crossover): a `TournamentDraw` with
+    the drawn contestants as population indices, best first, and the position of
+    the winner;
+  - `hall_of_fame_updated`: whether the child became the best entry of its complexity.
+
+  It is reported just before the child replaces the oldest member, so all references
   are valid.
-* `IterationSnapshot` carries the population and the current Pareto front after
-  initialization and after each iteration. A final snapshot is added when a stopping
-  rule ends an iteration early. Duplicate snapshots are suppressed.
+* `IterationSnapshot` carries the population, the current Pareto front and the full
+  hall of fame (one entry per complexity, including dominated ones), after
+  initialization and after each iteration. The end-of-iteration constant refinement
+  of the hall of fame happens before the snapshot. A final snapshot is added when a
+  stopping rule ends an iteration early. Duplicate snapshots are suppressed.
 
 The callbacks **consume no random numbers**, so an observed run is bit-identical
-to an unobserved one; `observer_tests` checks this. `Variation::Offspring` gained an
-`operation` field for the same purpose. When no observer is set, the cost is one
-empty `std::function` check per cycle.
+to an unobserved one; `observer_tests` checks this. It also checks the new fields:
+- contestants are distinct and ranked, and the winner is the reported parent;
+- a second tournament exists exactly for crossover;
+- optimization keeps the shape and never worsens the loss;
+- the hall-of-fame flag matches the update rule, mirrored from the snapshots.
+
+The tournament records its draw into a reused `TournamentDraw`, and the
+pre-optimization copy is made only when an observer is set. When no observer is
+set, the cost is one empty `std::function` check per cycle. `Variation::Offspring`
+has an `operation` field for the same purpose.
 
 ---
 
@@ -514,12 +533,26 @@ empty `std::function` check per cycle.
   parameters (`--tournament`, `--win-probability`, `--crossover`, `--optimize`);
   see `sr_search --help`. `--output` also writes `progress.csv`
   (`iterations,offspring,seconds,best_train_loss,front_size`, one row per snapshot).
-  `--trace FILE` writes a JSON trace for the visualizer, with this shape:
+  `--trace FILE` writes a JSON trace for the visualizer and the pipeline view, with
+  this shape:
   - `label`, `features`, `target`;
   - `rows`: up to ~200 training rows;
-  - `options`;
-  - `snapshots`: population as `[complexity, loss]` plus the Pareto front with expressions;
-  - `events`: the first 60 cycles and every cycle that improved the best loss, capped at 400;
+  - `options`, including mutation weights, the optimization probability, `max_attempts`
+    and `selection_tolerance`;
+  - `data_sizes`: rows in train, validation and test;
+  - `initial_population` and `initial_hall`: `[expression, loss]` pairs after initialization;
+  - `snapshots`, one per iteration:
+    - the population as `[complexity, loss]` and the Pareto front with expressions;
+    - `counts`: operations and outcomes of that iteration's offspring;
+    - `refined`: hall-of-fame entries improved by the end-of-iteration optimization;
+  - `events`: the whole first iteration and every cycle that improved the best loss,
+    capped at 400. Each event has:
+    - parent, child and losses;
+    - both tournaments (`t1`, `t2`) as ranked `[expression, loss]` lists with the winner;
+    - `p`: the mutation probabilities among the kinds applicable to the parent;
+    - `proposal`: the child before constant optimization;
+    - `hall_before` and `hall_updated`;
+    - `removed`: the replaced oldest member;
   - `result`.
 
   Plot-only numbers are written with 6 significant digits to keep traces small.
@@ -564,7 +597,7 @@ Debug, in Release and with AddressSanitizer + UndefinedBehaviorSanitizer
 | `variation_property_tests` | 10 seeds × (40 generated trees + 400 steps): every generated tree and every returned offspring is well-formed and admissible; some raw edits *are* inadmissible (the limits are actually exercised); each mutation does what its name says |
 | `constant_optimization_tests` | `a·x+b` fitted to (2.5, 0.75); evaluation budget; tree without constants; forbidden (+∞) region never entered |
 | `search_tests` | determinism; Pareto shape; iteration/target/time stopping rules; spring law recovered with 5 nodes and test MSE < 1e-20 on new data; CSV output |
-| `observer_tests` | one event per offspring in order, known operation names, crossover ⇔ second parent, the oldest slot is replaced, snapshots after init and each iteration, and an observed run equals an unobserved one |
+| `observer_tests` | one event per offspring in order, known operation names, crossover ⇔ second parent (and second tournament), the oldest slot is replaced, tournament contestants are distinct and ranked with the winner as parent, optimization keeps the shape and never worsens the loss, the hall-of-fame flag matches the update rule, snapshot halls ascend and contain the front, snapshots after init and each iteration, and an observed run equals an unobserved one |
 | `constrained_search_tests` | the final population and hall of fame of a constrained search are admissible; rejections happened |
 | `undefined_arithmetic_search_tests` | data contain x = 0 and the operators include `/` and `pow`: undefined candidates occur and are rejected, and x² is still found |
 | `custom_operator_search_tests` | a custom `hypot`, a custom loss (call counter) and a throwing custom unary operator: the loss drives the search, `hypot` is found, domain errors are rejected |
@@ -614,6 +647,8 @@ describe. Nothing in it is mocked.
 | `make_traces.sh` | builds Release, generates data, runs `sr_search` five times with `--trace` and `--output`, writes `traces.js` and `data/*.csv` |
 | `traces.js` | `window.SR_TRACES = [...]`: five traces, each with `id` and the true law (spring, projectile, constrained projectile with `pow`, oscillator, and a deliberately included failed run) |
 | `visualizer.html` | self-contained viewer (no CDN, works from `file://` and offline) |
+| `pipeline.html` | step-by-step map of the whole pipeline (data → random start → evolution loop → selection), filled with the recorded run |
+| `common.js` | helpers shared by both pages: formula parser and printer, `markDiff`, tree drawing |
 | `slides.tex` | Beamer deck, 17 slides; pgfplots charts read `data/*.csv` |
 | `README.md` | preparation commands, timed speaker script, live-demo runbook, expected questions (Polish) |
 | `jak_czytac_wizualizacje.md` | plain-language Polish guide to the viewer and the algorithm, walked through with real cycles and numbers from the projectile run |
@@ -686,6 +721,56 @@ Implementation notes:
   (indices from 0), so a presenter can jump to a prepared example. Headless Chrome
   screenshots use the same mechanism.
 
+**The pipeline view** (`pipeline.html`) answers "how do we get from measurements to
+a formula?" in one picture. Its style is a left-to-right infographic: rounded
+groups, cards with line icons, rounded connectors with dots, orange for data and
+evolution, blue for the final stage. It is drawn on a fixed 1600×900 stage scaled
+to the window, so it behaves like a slide.
+
+The groups:
+* **Measurements:** train, validation and test, plus the hidden true law. The law
+  is blurred until the last step.
+* **Start:** settings, the random initial population and the initial hall of fame.
+  The population is shown as a colour grid (darker = lower loss) with the size
+  histogram.
+* **Evolution loop:** seven cards for one cycle (tournament, mutation or crossover,
+  limits, evaluation, constant tuning, hall of fame, replacement of the oldest),
+  plus an "end of iteration" strip. Arrows show "next cycle" and "next iteration",
+  and a retry arrow appears when the limits rejected a proposal.
+* **Result:** Pareto front with validation losses, the selection threshold, the
+  test loss and the final formula next to the true law.
+
+Every step lights one card and the arrow that leads into it. A narration bar
+explains the step with that cycle's numbers. The dashed validation and test wires
+run along the bottom to the final stage, because those sets are used only there.
+
+What the cards show with real data:
+* **Tournament:** the eight ranked contestants with their losses, the chance of each
+  rank, p(1−p)^k, and the winner.
+* **Mutation or crossover:** the 80/20 split, the six mutation tiles with their
+  probabilities among the kinds applicable to that parent (inapplicable ones struck
+  through), the chosen one outlined, and parent → child trees with the change
+  marked.
+* **Limits:** size and depth against the limits, and rejected then accepted proposals.
+* **Evaluation:** the MSE versus the parent and a measured-versus-predicted scatter.
+* **Constant tuning:** the 5% draw, and the formula before and after when it happens.
+* **Hall of fame:** the previous record of that size and whether it was replaced.
+* **Replacement:** the population ring with the replaced slot and the member that
+  leaves.
+
+Steps:
+* **Order.** 4 preparation steps, then 7 steps for every recorded cycle, one
+  end-of-iteration step per iteration, and 4 final steps (517 steps for the spring
+  run).
+* **Cycles without a new record.** After the first iteration only cycles that
+  improved the best loss are recorded. The end-of-iteration step summarizes the
+  others: counts and constant refinements.
+* **Jumps:** next cycle (C), next record (R), end of iteration (I), result (E),
+  autoplay (space) and a step slider.
+* **Deep links:** `pipeline.html#run=spring&step=172`.
+
+All 4288 steps of the five traces render without errors.
+
 The slides cite only measured numbers. Their plots and the visualizer are
 generated from the same runs, and `make_traces.sh` reproduces them
 deterministically; only the timing fields change between runs.
@@ -710,6 +795,8 @@ deterministically; only the timing fields change between runs.
 | No simulated annealing, no adaptive parsimony, no simplification | as in PySR | outside the agreed scope for now; candidates for later work |
 | Observer callbacks instead of logging inside the search | printing from `fit`, a trace file written by the library | the library stays I/O-free; any front end (CLI trace, tests, future GUI) can observe; no effect on results |
 | Offline hand-written SVG viewer fed by `traces.js` | chart library from a CDN, a live server | must work in a lecture room without network or a build step |
+| Pipeline view on a fixed 1600×900 stage with cards placed by coordinates | responsive flow layout, a graph-layout library | the map must look the same on every projector and wires need exact anchor points; scaling the stage keeps it slide-like |
+| Tournament draws and the pre-optimization child exposed through the observer | recomputing them in the front end | the front end cannot replay the random numbers; exposing them costs nothing when no observer is set |
 
 ---
 

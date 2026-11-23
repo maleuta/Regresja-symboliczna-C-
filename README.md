@@ -164,7 +164,8 @@ na wynik.
 
 Katalog `presentation/` zawiera slajdy Beamer (`slides.tex`), wizualizację
 przebiegu wyszukiwania (`visualizer.html`, działa offline po otwarciu pliku
-w przeglądarce), dane z rzeczywistych uruchomień (`traces.js`, `data/`) oraz
+w przeglądarce), mapę całego procesu krok po kroku (`pipeline.html`), dane
+z rzeczywistych uruchomień (`traces.js`, `data/`) oraz
 scenariusz pokazu z poleceniami (`presentation/README.md`). Dane odtwarza
 `presentation/make_traces.sh`; slajdy kompiluje:
 

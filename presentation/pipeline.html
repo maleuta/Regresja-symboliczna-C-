@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline regresji symbolicznej</title>
+<!-- Step-by-step map of the whole search: data → random start → evolution loop → selection.
+     Every card shows what really happened in a recorded sr_search run (traces.js). -->
+<style>
+:root {
+  color-scheme: light;
+  --page: #ffffff;
+  --group: #fbfaf8;
+  --card: #ffffff;
+  --border: #e3e1da;
+  --border-strong: #cfccc3;
+  --text-primary: #1c1c1a;
+  --text-secondary: #55544f;
+  --text-muted: #8a8982;
+  --accent: #e8622c;
+  --accent-wash: #fdece4;
+  --accent-soft: #f6b89c;
+  --blue: #1f7fbf;
+  --blue-wash: #e4f0fa;
+  --good: #16924a;
+  --bad: #d23f3f;
+  --cell: #ecebe6;
+  /* names used by drawTree in common.js */
+  --series-1: var(--blue); --series-1-wash: var(--blue-wash);
+  --series-2: var(--accent); --series-2-wash: var(--accent-wash);
+  --node-op: #f1f0ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #141413; --group: #1a1a19; --card: #1f1f1d; --border: #34342f; --border-strong: #46463f;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --accent: #f07440; --accent-wash: #3d2418; --accent-soft: #8a4426; --blue: #4b9de0; --blue-wash: #18293a;
+    --good: #3fbf6f; --bad: #ef6464; --cell: #2c2c29; --node-op: #2c2c29;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #141413; --group: #1a1a19; --card: #1f1f1d; --border: #34342f; --border-strong: #46463f;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --accent: #f07440; --accent-wash: #3d2418; --accent-soft: #8a4426; --blue: #4b9de0; --blue-wash: #18293a;
+  --good: #3fbf6f; --bad: #ef6464; --cell: #2c2c29; --node-op: #2c2c29;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--page); color: var(--text-primary); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, select { font: inherit; color: var(--text-primary); background: var(--card); border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--text-muted); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .4; cursor: default; }
+kbd { border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 11px; }
+
+/* The stage is a fixed 1600×900 canvas scaled to the window, like a slide. */
+#stage { position: absolute; left: 0; top: 0; width: 1600px; height: 900px; transform-origin: 0 0; }
+.title { position: absolute; left: 0; right: 0; top: 14px; text-align: center; }
+.title h1 { display: inline-block; margin: 0; font-size: 30px; font-weight: 800; letter-spacing: .02em; color: var(--accent);
+  border-bottom: 2px solid var(--accent-soft); padding: 0 18px 2px; }
+.title .sub { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
+#run-box { position: absolute; left: 16px; top: 18px; display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-muted); }
+#run-box select { max-width: 330px; font-size: 12px; padding: 3px 6px; }
+#help { position: absolute; right: 16px; top: 20px; font-size: 11.5px; color: var(--text-muted); text-align: right; line-height: 1.7; }
+
+.group { position: absolute; border: 1.5px dashed var(--border-strong); border-radius: 18px; background: var(--group); }
+.group > .glabel { position: absolute; left: 14px; top: 6px; font-weight: 750; font-size: 14px; letter-spacing: .03em; text-transform: uppercase; }
+.group.data > .glabel, .group.start > .glabel { color: var(--text-secondary); }
+.group.loop { border: 2px solid var(--accent-soft); background: color-mix(in srgb, var(--accent-wash) 45%, var(--page)); }
+.group.loop > .glabel { color: var(--accent); }
+.group.end { border-color: color-mix(in srgb, var(--blue) 45%, transparent); background: color-mix(in srgb, var(--blue-wash) 45%, var(--page)); }
+.group.end > .glabel { color: var(--blue); }
+.group.lit { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.group.end.lit { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 25%, transparent); }
+#loop-counters { position: absolute; left: 190px; top: 5px; width: 300px; display: grid; grid-template-columns: auto auto; gap: 0 14px;
+  align-items: center; font-size: 12px; line-height: 1.35; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#loop-counters b { color: var(--text-primary); }
+#loop-progress { width: 110px; height: 6px; border-radius: 3px; background: var(--cell); overflow: hidden; }
+#loop-progress > div { height: 100%; background: var(--accent); width: 0; }
+
+.card { position: absolute; background: var(--card); border: 1.5px solid var(--border); border-radius: 12px;
+  display: flex; flex-direction: column; overflow: hidden; transition: opacity .25s, border-color .25s, box-shadow .25s; z-index: 2; }
+.card .head { display: flex; align-items: center; gap: 7px; padding: 6px 9px 4px; flex: none; }
+.card .icon { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-wash); color: var(--accent); }
+.card.blue .icon { background: var(--blue-wash); color: var(--blue); }
+.card .icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.card .name { font-weight: 700; font-size: 13.5px; line-height: 1.15; }
+.card .num { margin-left: auto; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.card .body { padding: 2px 10px 8px; flex: 1; min-height: 0; overflow: hidden; position: relative; }
+.card.pending { opacity: .42; }
+.card.active { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent), 0 8px 24px rgba(0,0,0,.08); opacity: 1; }
+.card.blue.active { border-color: var(--blue); box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 22%, transparent), 0 8px 24px rgba(0,0,0,.08); }
+.card.active .num { color: var(--accent); font-weight: 700; }
+.card.blue.active .num { color: var(--blue); }
+
+.muted { color: var(--text-muted); }
+.sec { color: var(--text-secondary); }
+.small { font-size: 11.5px; }
+.big { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.f { font-family: "STIX Two Math", "Cambria Math", Georgia, serif; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f.wrap { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.good { color: var(--good); } .bad { color: var(--bad); }
+.pill { display: inline-block; border-radius: 999px; padding: 0 8px; font-size: 11.5px; font-weight: 650; border: 1px solid var(--border-strong); }
+.pill.yes { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pill.ok { background: color-mix(in srgb, var(--good) 15%, transparent); border-color: var(--good); color: var(--good); }
+.pill.no { color: var(--text-muted); }
+table { border-collapse: collapse; width: 100%; table-layout: fixed; font-variant-numeric: tabular-nums; }
+td, th { padding: 1px 4px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 19px; }
+th { font-size: 10.5px; color: var(--text-muted); font-weight: 600; }
+td.r, th.r { text-align: right; }
+tr.win td { background: var(--accent-wash); font-weight: 650; }
+tr.win td:first-child { box-shadow: inset 3px 0 var(--accent); }
+tr.sel td { background: var(--blue-wash); font-weight: 650; }
+tr.sel td:first-child { box-shadow: inset 3px 0 var(--blue); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; font-size: 12px; }
+.kv .k { color: var(--text-muted); }
+.split { display: flex; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-strong); font-size: 11.5px; margin: 2px 0 5px; }
+.split > div { display: grid; place-items: center; color: var(--text-secondary); white-space: nowrap; font-size: 11px; }
+.split > div + div { border-left: 1px solid var(--border-strong); }
+.split > div.on { background: var(--accent); color: #fff; font-weight: 650; }
+.chips { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 4px; }
+.chip { position: relative; border: 1px solid var(--border); border-radius: 5px; height: 21px; padding: 0 6px; font-size: 11.5px;
+  display: flex; justify-content: space-between; align-items: center; overflow: hidden; white-space: nowrap; }
+.chip > i { position: absolute; inset: 0 auto 0 0; background: var(--accent-wash); z-index: 0; }
+.chip > span { position: relative; z-index: 1; }
+.chip.on { border-color: var(--accent); border-width: 1.5px; font-weight: 700; color: var(--accent); }
+.chip.on > i { background: color-mix(in srgb, var(--accent) 28%, var(--card)); }
+.chip.off { color: var(--text-muted); text-decoration: line-through; background: transparent; }
+.bars { display: grid; grid-template-columns: 104px 1fr 34px; gap: 1px 6px; align-items: center; font-size: 11.5px; }
+.bars .bar { height: 11px; border-radius: 3px; background: var(--cell); position: relative; overflow: hidden; }
+.bars .bar > i { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft); }
+.bars .on { color: var(--accent); font-weight: 700; }
+.bars .bar.on > i { background: var(--accent); }
+.bars .off { color: var(--text-muted); text-decoration: line-through; }
+.trees { display: grid; grid-template-columns: 1fr 18px 1fr; align-items: center; gap: 2px; margin-top: 4px; }
+.trees .mini { height: 128px; border: 1px solid var(--border); border-radius: 8px; padding: 2px; display: flex; flex-direction: column; }
+.trees .mini .lbl { font-size: 10.5px; color: var(--text-muted); text-align: center; flex: none; }
+.trees .mini svg { width: 100% !important; flex: 1; min-height: 0; }
+.trees .arrow { text-align: center; color: var(--accent); font-weight: 700; }
+.grid { display: grid; gap: 2px; }
+.grid > i { aspect-ratio: 1; border-radius: 3px; background: var(--cell); }
+.grid > i.now { background: var(--accent); box-shadow: 0 0 0 2px var(--card), 0 0 0 3.5px var(--accent); }
+.grid > i.fresh { background: var(--accent-soft); }
+.grid > i.inf { background: transparent; border: 1.5px solid var(--bad); }
+.tries { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; }
+.tries > i { width: 13px; height: 13px; border-radius: 3px; background: var(--cell); }
+.tries > i.rej { background: var(--bad); }
+.tries > i.acc { background: var(--good); }
+.check { display: grid; grid-template-columns: 16px 1fr; gap: 1px 4px; font-size: 12px; }
+.lock { filter: blur(5px); user-select: none; }
+.strip { display: grid; grid-template-columns: 1.5fr 1.3fr 0.9fr; gap: 14px; height: 100%; }
+#c-iteration .head { padding-bottom: 0; }
+.strip > div { min-width: 0; }
+
+svg.wires { position: absolute; inset: 0; width: 1600px; height: 900px; pointer-events: none; z-index: 1; overflow: visible; }
+.wire { fill: none; stroke: var(--border-strong); stroke-width: 1.4; }
+.wire.data { stroke-dasharray: 5 4; }
+.wire.lit { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 5; animation: flow .8s linear infinite; }
+.wire.blue.lit { stroke: var(--blue); }
+@keyframes flow { to { stroke-dashoffset: -12; } }
+.dot { fill: var(--accent); }
+.dot.blue { fill: var(--blue); }
+.wire-label { font-size: 11px; fill: var(--text-muted); paint-order: stroke; stroke: var(--page); stroke-width: 4px; stroke-linejoin: round; }
+.wire-label.lit { fill: var(--accent); font-weight: 700; }
+.wire-label.blue.lit { fill: var(--blue); }
+@media (prefers-reduced-motion: reduce) { .wire.lit { animation: none; } .card { transition: none; } }
+
+#narration { position: absolute; left: 14px; top: 780px; width: 1572px; height: 108px; background: var(--card);
+  border: 1.5px solid var(--border); border-radius: 14px; display: grid; grid-template-columns: 1fr 520px; gap: 18px; padding: 10px 16px; z-index: 3; }
+#nar-where { font-size: 11.5px; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+#nar-title { font-size: 17px; font-weight: 750; margin: 1px 0 2px; }
+#nar-text { font-size: 14px; color: var(--text-secondary); line-height: 1.4; }
+#nar-text .f { font-size: 14.5px; color: var(--text-primary); }
+#controls { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+#controls .row { display: flex; gap: 5px; align-items: center; }
+#controls button { padding: 4px 9px; white-space: nowrap; }
+#controls input[type=range] { flex: 1; accent-color: var(--accent); }
+#step-label { font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="title"><h1>PIPELINE REGRESJI SYMBOLICZNEJ</h1><div class="sub">od pomiarów do gotowego wzoru, na prawdziwym przebiegu programu <code>sr_search</code></div></div>
+  <label id="run-box">Przebieg<select id="run" aria-label="Wybór przebiegu"></select></label>
+  <div id="help"><kbd>→</kbd>/<kbd>←</kbd> krok · <kbd>C</kbd> następny cykl · <kbd>R</kbd> rekord<br><kbd>I</kbd> koniec iteracji · <kbd>E</kbd> wynik · <kbd>Spacja</kbd> odtwarzaj</div>
+  <div id="board"></div>
+  <section id="narration" aria-live="polite">
+    <div><div id="nar-where"></div><div id="nar-title"></div><div id="nar-text"></div></div>
+    <div id="controls">
+      <div class="row">
+        <button id="prev" title="Poprzedni krok (←)">◀</button>
+        <button id="next" class="primary" title="Następny krok (→)">Dalej ▶</button>
+        <button id="j-cycle" title="Następny cykl (C)">⏭ Cykl</button>
+        <button id="j-record" title="Następny cykl z nowym rekordem (R)">★ Rekord</button>
+        <button id="j-iter" title="Koniec iteracji (I)">⟳ Iteracja</button>
+        <button id="j-end" title="Wybór wyniku (E)">⏹ Wynik</button>
+      </div>
+      <div class="row">
+        <button id="play" title="Odtwarzaj (Spacja)">▶ Odtwarzaj</button>
+        <select id="speed" aria-label="Tempo"><option value="2400">wolno</option><option value="1300" selected>normalnie</option><option value="500">szybko</option></select>
+        <input id="slider" type="range" min="0" value="0" aria-label="Krok">
+        <span id="step-label"></span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="traces.js"></script>
+<script src="common.js"></script>
+<script>
+"use strict";
+const TRACES = window.SR_TRACES || [];
+const $ = (id) => document.getElementById(id);
+
+// ================================================================== layout (stage pixels)
+const GROUPS = {
+  data:  { x: 14,   y: 80, w: 216, h: 600, label: "Pomiary" },
+  start: { x: 246,  y: 80, w: 240, h: 680, label: "Start" },
+  loop:  { x: 504,  y: 80, w: 752, h: 682, label: "Pętla ewolucji" },
+  end:   { x: 1276, y: 80, w: 310, h: 680, label: "Wynik" },
+};
+// num: position in the pipeline shown on the card; order: index used for done/pending states.
+const CARDS = {
+  train:      { x: 26,   y: 112, w: 192, h: 214, name: "Trening", icon: "data", num: 1 },
+  val:        { x: 26,   y: 340, w: 192, h: 92,  name: "Walidacja", icon: "val", num: 1 },
+  test:       { x: 26,   y: 446, w: 192, h: 92,  name: "Test", icon: "flask", num: 1 },
+  truth:      { x: 26,   y: 554, w: 192, h: 112, name: "Prawdziwe prawo", icon: "lock", num: 1 },
+  settings:   { x: 258,  y: 112, w: 216, h: 196, name: "Ustawienia", icon: "sliders", num: 2 },
+  population: { x: 258,  y: 328, w: 216, h: 228, name: "Losowa populacja", icon: "dice", num: 3 },
+  hall0:      { x: 258,  y: 576, w: 216, h: 172, name: "Hall of fame: start", icon: "trophy", num: 4 },
+  tournament: { x: 520,  y: 128, w: 228, h: 276, name: "Turniej", icon: "podium", num: 5 },
+  variation:  { x: 768,  y: 128, w: 300, h: 276, name: "Mutacja lub krzyżowanie", icon: "shuffle", num: 6 },
+  limits:     { x: 1088, y: 128, w: 152, h: 276, name: "Limity", icon: "shield", num: 7 },
+  evaluation: { x: 1075, y: 436, w: 165, h: 206, name: "Ocena (MSE)", icon: "gauge", num: 8 },
+  constants:  { x: 890,  y: 436, w: 165, h: 206, name: "Dostrojenie liczb", icon: "tune", num: 9 },
+  hall:       { x: 705,  y: 436, w: 165, h: 206, name: "Hall of fame", icon: "trophy", num: 10 },
+  replace:    { x: 520,  y: 436, w: 165, h: 206, name: "Wymiana najstarszego", icon: "recycle", num: 11 },
+  iteration:  { x: 520,  y: 666, w: 720, h: 86,  name: "Koniec iteracji", icon: "flag", num: 12 },
+  front:      { x: 1288, y: 112, w: 286, h: 214, name: "Front Pareta", icon: "funnel", num: 13, blue: true },
+  selection:  { x: 1288, y: 346, w: 286, h: 160, name: "Wybór na walidacji", icon: "check", num: 14, blue: true },
+  testeval:   { x: 1288, y: 526, w: 286, h: 96,  name: "Ocena na teście", icon: "flask", num: 15, blue: true },
+  result:     { x: 1288, y: 642, w: 286, h: 110, name: "Gotowy wzór", icon: "star", num: 16, blue: true },
+};
+const CYCLE = ["tournament", "variation", "limits", "evaluation", "constants", "hall", "replace"];
+const PREP = ["data", "settings", "population", "hall0"];
+const END = ["front", "selection", "testeval", "result"];
+const DATA_CARDS = ["train", "val", "test", "truth"];
+
+// Wires: polyline points, optional label {at:[x,y], text, anchor}, kind: flow | data (dashed) | blue.
+const WIRES = {
+  train:    { pts: [[218, 220], [238, 220], [238, 380], [258, 380]] },
+  setpop:   { pts: [[366, 308], [366, 328]] },
+  pophall:  { pts: [[366, 556], [366, 576]] },
+  start:    { pts: [[474, 662], [494, 662], [494, 176], [520, 176]], label: { at: [497, 420], text: "start pętli", rot: -90 } },
+  tv:       { pts: [[748, 266], [768, 266]] },
+  vl:       { pts: [[1068, 266], [1088, 266]] },
+  retry:    { pts: [[1164, 128], [1164, 114], [990, 114], [990, 128]], label: { at: [1077, 110], text: "poza limitem → nowa próba", anchor: "middle" } },
+  le:       { pts: [[1160, 404], [1160, 436]] },
+  ec:       { pts: [[1075, 539], [1055, 539]] },
+  ch:       { pts: [[890, 539], [870, 539]] },
+  hr:       { pts: [[705, 539], [685, 539]] },
+  rt:       { pts: [[602, 436], [602, 404]], label: { at: [608, 424], text: "następny cykl" } },
+  rit:      { pts: [[602, 642], [602, 666]], label: { at: [608, 658], text: "co N cykli" } },
+  iterloop: { pts: [[520, 690], [511, 690], [511, 372], [520, 372]], label: { at: [508, 560], text: "następna iteracja", rot: -90 } },
+  exit:     { pts: [[1240, 709], [1262, 709], [1262, 200], [1288, 200]], label: { at: [1259, 470], text: "stop", rot: -90 }, kind: "blue" },
+  fs:       { pts: [[1431, 326], [1431, 346]], kind: "blue" },
+  st:       { pts: [[1431, 506], [1431, 526]], kind: "blue" },
+  tr:       { pts: [[1431, 622], [1431, 642]], kind: "blue" },
+  valwire:  { pts: [[218, 386], [230, 386], [230, 768], [1270, 768], [1270, 440], [1288, 440]], kind: "data blue",
+              label: { at: [700, 764], text: "walidacja czeka do końca", anchor: "middle" } },
+  testwire: { pts: [[218, 492], [240, 492], [240, 774], [1280, 774], [1280, 590], [1288, 590]], kind: "data blue",
+              label: { at: [1000, 770], text: "test czeka do końca", anchor: "middle" } },
+};
+
+const ICONS = {
+  data: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  val: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 11l2 2 4-4M9 17h6"/>',
+  flask: '<path d="M9 3h6M10 3v6L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7 15h10"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  dice: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.2"/><circle cx="16" cy="16" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="16" cy="8" r="1.2"/><circle cx="8" cy="16" r="1.2"/>',
+  trophy: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3"/>',
+  podium: '<path d="M3 21h18M5 21v-6h4v6M10 21V9h4v12M15 21v-9h4v9"/><path d="M12 2.5l.9 1.9 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3z"/>',
+  shuffle: '<path d="M4 7h3c4 0 6 10 10 10h3M4 17h3c1.6 0 2.8-1.6 4-3.5M13 9.5C14.2 8 15.4 7 17 7h3"/><path d="M18 4l3 3-3 3M18 14l3 3-3 3"/>',
+  shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+  gauge: '<path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/><circle cx="12" cy="18" r="1.5"/>',
+  tune: '<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M5 19l2.5-2.5M16.5 7.5L19 5"/>',
+  recycle: '<path d="M20 11a8 8 0 0 0-14.6-4.5M4 13a8 8 0 0 0 14.6 4.5"/><path d="M4 3v4h4M20 21v-4h-4"/>',
+  flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  funnel: '<path d="M3 4h18l-7 8v6l-4 2v-8z"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+};
+
+// ================================================================== small helpers
+const MUTATIONS = [
+  ["perturb_constant", "przesuń liczbę", "jedna liczba we wzorze przesuwa się losowo"],
+  ["change_operator", "zmień działanie", "jedno działanie zamienia się na inne, np. + na ×"],
+  ["replace_leaf", "podmień liść", "jeden liść staje się nową zmienną albo liczbą"],
+  ["replace_subtree", "nowe poddrzewo", "fragment wzoru zastępuje nowe, losowe poddrzewo"],
+  ["insert_node", "wstaw działanie", "fragment wzoru zostaje owinięty nowym działaniem"],
+  ["delete_node", "usuń działanie", "działanie znika, zostaje jeden z jego argumentów"],
+];
+const MUT_NAME = Object.fromEntries(MUTATIONS.map(([k, n]) => [k, n]));
+const OP_SYMBOL = { "+": "+", "-": "−", "*": "×", "/": "÷", pow: "potęga" };
+const strip = (html) => html.replace(/<[^>]+>/g, "");
+const F = (text, cls = "f") => { const h = formulaHtml(text); return `<div class="${cls}" title="${esc(strip(h))}">${h}</div>`; };
+const Fi = (text) => { const h = formulaHtml(text); return `<span class="f" title="${esc(strip(h))}">${h}</span>`; };
+const pct = (p) => { const v = p * 100; return (v >= 9.95 || v === 0 ? String(Math.round(v)) : pl(String(Number(v.toFixed(v < 0.1 ? 2 : 1))))) + "%"; };
+const num = (n) => Number(n).toLocaleString("pl-PL");
+const finite = (v) => v !== null && v !== undefined && Number.isFinite(v);
+const lossOf = (pair) => (pair && finite(pair[1]) ? pair[1] : Infinity);
+const tournamentChance = (k, n, p) => (k < n - 1 ? p * Math.pow(1 - p, k) : Math.pow(1 - p, n - 1));
+const plural = (n, one, few, many) => {
+  if (n === 1) return one;
+  const d = n % 10, t = n % 100;
+  return d >= 2 && d <= 4 && (t < 12 || t > 14) ? few : many;
+};
+
+// ================================================================== state
+let run = null, steps = [], cur = 0, timer = null, bestAt = [];
+
+function buildSteps() {
+  steps = PREP.map((node) => ({ node }));
+  const events = run.events;
+  let e = 0;
+  for (let s = 1; s < run.snapshots.length; s++) {
+    const snap = run.snapshots[s];
+    while (e < events.length && events[e].cycle < snap.offspring) {
+      for (const node of CYCLE) steps.push({ node, ev: events[e] });
+      e++;
+    }
+    steps.push({ node: "iteration", snap, prevSnap: run.snapshots[s - 1] });
+  }
+  for (const node of END) steps.push({ node });
+  // Best train loss known at every step (offspring become known at the hall-of-fame stage).
+  let best = Math.min(...run.initial_population.map(lossOf));
+  bestAt = steps.map((st) => {
+    if (st.node === "hall" && finite(st.ev.child_loss)) best = Math.min(best, st.ev.child_loss);
+    if (st.node === "iteration" && st.snap.front.length) best = Math.min(best, st.snap.front.at(-1).loss);
+    return best;
+  });
+}
+
+// Selection rule of sr::fit on the final front (validation loss when available).
+function selection() {
+  const front = run.result.front;
+  const useVal = front.some((c) => finite(c.val));
+  const loss = (c) => (useVal ? (finite(c.val) ? c.val : Infinity) : c.loss);
+  const minimum = Math.min(...front.map(loss));
+  const tol = run.options.selection_tolerance ?? 0.05;
+  const simplest = loss(front[0]);
+  const floor = Number.isFinite(simplest) ? 1e-12 * simplest : 0;
+  const threshold = Math.max(minimum * (1 + tol), floor);
+  const chosen = front.findIndex((c) => loss(c) <= threshold);
+  return { useVal, minimum, tol, simplest, floor, threshold, chosen };
+}
+
+// ================================================================== board construction
+function iconSvg(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`; }
+function buildBoard() {
+  const board = $("board");
+  board.replaceChildren();
+  for (const [id, g] of Object.entries(GROUPS)) {
+    const div = document.createElement("div");
+    div.className = `group ${id}`; div.id = `g-${id}`;
+    Object.assign(div.style, { left: g.x + "px", top: g.y + "px", width: g.w + "px", height: g.h + "px" });
+    div.innerHTML = `<div class="glabel">${g.label}</div>` + (id === "loop"
+      ? `<div id="loop-counters"><span id="lc-iter"></span><span id="lc-cycle"></span><span id="lc-best"></span><div id="loop-progress" title="postęp ewolucji"><div></div></div></div>` : "");
+    board.appendChild(div);
+  }
+  const svg = el("svg", { class: "wires", viewBox: "0 0 1600 900" });
+  const defs = el("defs", {}, svg);
+  for (const [name, color] of [["arrow", "var(--border-strong)"], ["arrow-lit", "var(--accent)"], ["arrow-blue", "var(--blue)"]]) {
+    const m = el("marker", { id: name, viewBox: "0 0 10 10", refX: 8.5, refY: 5, markerWidth: 8, markerHeight: 8, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0 0L10 5L0 10z", fill: color }, m);
+  }
+  for (const [id, w] of Object.entries(WIRES)) {
+    const g = el("g", { id: `w-${id}` }, svg);
+    el("path", { d: roundedPath(w.pts, 9), class: `wire ${w.kind || ""}`, "marker-end": "url(#arrow)" }, g);
+    const [sx, sy] = w.pts[0];
+    el("circle", { cx: sx, cy: sy, r: 2.6, class: `dot ${(w.kind || "").includes("blue") ? "blue" : ""}` }, g);
+    if (w.label) {
+      const t = el("text", { x: w.label.at[0], y: w.label.at[1], class: `wire-label ${(w.kind || "").includes("blue") ? "blue" : ""}`,
+        "text-anchor": w.label.anchor || (w.label.rot ? "middle" : "start") }, g);
+      if (w.label.rot) t.setAttribute("transform", `rotate(${w.label.rot} ${w.label.at[0]} ${w.label.at[1]})`);
+      t.textContent = w.label.text;
+    }
+  }
+  board.appendChild(svg);
+  for (const [id, c] of Object.entries(CARDS)) {
+    const div = document.createElement("div");
+    div.className = `card${c.blue ? " blue" : ""}`; div.id = `c-${id}`;
+    Object.assign(div.style, { left: c.x + "px", top: c.y + "px", width: c.w + "px", height: c.h + "px" });
+    div.innerHTML = `<div class="head"><span class="icon">${iconSvg(c.icon)}</span><span class="name">${c.name}</span>` +
+      `<span class="num">${DATA_CARDS.includes(id) && id !== "train" ? "" : c.num}</span></div><div class="body" id="b-${id}"></div>`;
+    board.appendChild(div);
+  }
+}
+function roundedPath(pts, r) {
+  let d = `M${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+    const l1 = Math.hypot(x1 - x0, y1 - y0), l2 = Math.hypot(x2 - x1, y2 - y1), rr = Math.min(r, l1 / 2, l2 / 2);
+    const ax = x1 - ((x1 - x0) / l1) * rr, ay = y1 - ((y1 - y0) / l1) * rr;
+    const bx = x1 + ((x2 - x1) / l2) * rr, by = y1 + ((y2 - y1) / l2) * rr;
+    d += ` L${ax} ${ay} Q${x1} ${y1} ${bx} ${by}`;
+  }
+  const last = pts.at(-1);
+  return d + ` L${last[0]} ${last[1]}`;
+}
+
+// ================================================================== card contents
+const O = () => run.options;
+const sizes = () => run.data_sizes || [run.rows.length];
+const N = () => O().population_size;
+
+function predictions(text) {
+  const tree = parse(text), names = run.features;
+  return run.rows.map((row) => {
+    const env = {}; names.forEach((n, i) => { env[n] = row[i]; });
+    return [row[names.length], evaluate(tree, env)];
+  });
+}
+// Scatter of measured y against predicted y; points on the diagonal are perfect predictions.
+function fitPlot(text, w, h) {
+  const pts = predictions(text);
+  const ys = pts.map((p) => p[0]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+  const X = (v) => 4 + ((v - lo) / (hi - lo)) * (w - 8), Y = (v) => h - 4 - ((v - lo) / (hi - lo)) * (h - 8);
+  let dots = "";
+  for (const [y, p] of pts) {
+    if (!Number.isFinite(p)) continue;
+    const py = Math.min(Math.max(p, lo), hi);
+    dots += `<circle cx="${X(y).toFixed(1)}" cy="${Y(py).toFixed(1)}" r="1.7" fill="var(--accent)" opacity=".75"/>`;
+  }
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="Pomiar a przewidywanie">` +
+    `<rect x=".5" y=".5" width="${w - 1}" height="${h - 1}" rx="6" fill="none" stroke="var(--border)"/>` +
+    `<line x1="${X(lo)}" y1="${Y(lo)}" x2="${X(hi)}" y2="${Y(hi)}" stroke="var(--text-muted)" stroke-dasharray="3 3"/>${dots}</svg>`;
+}
+function dataPlot(w, h) {
+  const rows = run.rows;
+  const xs = rows.map((r) => r[0]), ys = rows.map((r) => r[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const X = (v) => 6 + ((v - x0) / (x1 - x0 || 1)) * (w - 12), Y = (v) => h - 6 - ((v - y0) / (y1 - y0 || 1)) * (h - 12);
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="Dane treningowe">` +
+    `<rect x=".5" y=".5" width="${w - 1}" height="${h - 1}" rx="6" fill="none" stroke="var(--border)"/>` +
+    rows.map((r) => `<circle cx="${X(r[0]).toFixed(1)}" cy="${Y(r[1]).toFixed(1)}" r="1.8" fill="var(--accent)" opacity=".7"/>`).join("") +
+    `<text x="${w - 6}" y="${h - 8}" text-anchor="end" font-size="10" fill="var(--text-muted)">${esc(run.features[0])}</text>` +
+    `<text x="8" y="14" font-size="10" fill="var(--text-muted)">${esc(run.target)}</text></svg>`;
+}
+
+function popGrid(cells, cols) {
+  return `<div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${cells.join("")}</div>`;
+}
+
+const R = {};  // card renderers: (ctx) => html
+
+R.train = () => {
+  const n = sizes()[0];
+  const top = run.features.length === 1 ? dataPlot(170, 104)
+    : `<table><tr>${run.features.map((f) => `<th>${esc(f)}</th>`).join("")}<th>${esc(run.target)}</th></tr>` +
+      run.rows.slice(0, 4).map((r) => `<tr>${r.map((v) => `<td>${fmtConst(v, 4)}</td>`).join("")}</tr>`).join("") + "</table>";
+  return `${top}<div style="margin-top:6px"><b>${num(n)} wierszy</b></div><div class="sec small">na nich liczymy błąd każdego wzoru w pętli</div>`;
+};
+R.val = () => `<b>${sizes()[1] ? num(sizes()[1]) + " wierszy" : "brak"}</b><div class="sec small">dopiero na końcu: wybór wzoru</div>`;
+R.test = () => `<b>${sizes()[2] ? num(sizes()[2]) + " wierszy" : "brak"}</b><div class="sec small">raz, na sam koniec: uczciwa ocena</div>`;
+R.truth = (ctx) => {
+  const shown = ctx.phase === "end" && END.indexOf(ctx.node) >= 3;
+  return `<div class="f wrap ${shown ? "" : "lock"}" style="font-size:15px">${esc(run.truth || "?")}</div>` +
+    `<div class="sec small" style="margin-top:4px">${shown ? "odsłonięte dopiero teraz, do porównania" : "program go <b>nie zna</b>; dane wygenerowano z niego"}</div>`;
+};
+
+R.settings = () => {
+  const o = O();
+  const ops = [...o.binary.map((b) => OP_SYMBOL[b] || b), ...o.unary].join("  ");
+  const total = o.iterations * o.population_size;
+  return `<div class="kv">
+    <span class="k">działania</span><span><b>${esc(ops)}</b></span>
+    <span class="k">zmienne</span><span><i>${run.features.map(esc).join(", ")}</i>, losowe liczby</span>
+    <span class="k">populacja</span><span>${num(o.population_size)} wzorów</span>
+    <span class="k">budżet</span><span>${num(o.iterations)} iteracji × ${num(o.population_size)} = <b>${num(total)}</b> cykli</span>
+    <span class="k">limity</span><span>rozmiar ≤ ${o.max_size}, głęb. ≤ ${o.max_depth}</span>
+    <span class="k">turniej</span><span>${o.tournament_size} wzorów, p = ${pl(String(o.tournament_win_probability))}</span>
+    <span class="k">krzyżowanie</span><span>${pct(o.crossover_probability)}, liczby: ${pct(o.optimize_probability ?? 0.05)}</span>
+    <span class="k">ziarno</span><span>${o.seed}</span></div>`;
+};
+
+R.population = () => {
+  const pop = run.initial_population;
+  const order = pop.map((p, i) => [lossOf(p), i]).sort((a, b) => a[0] - b[0]);
+  const rank = new Array(pop.length);
+  order.forEach(([, i], r) => { rank[i] = r; });
+  const cols = Math.ceil(Math.sqrt(pop.length));
+  const cells = pop.map((p, i) => {
+    if (!Number.isFinite(lossOf(p))) return `<i class="inf" title="${esc(strip(formulaHtml(p[0])))} · MSE ∞"></i>`;
+    const strength = Math.round(92 - (rank[i] / Math.max(1, pop.length - 1)) * 82);
+    return `<i style="background:color-mix(in srgb, var(--accent) ${strength}%, var(--cell))" title="${esc(strip(formulaHtml(p[0])))} · MSE ${fmtLoss(p[1])}"></i>`;
+  });
+  const hist = {};
+  pop.forEach((p) => { const s = size(parse(p[0])); hist[s] = (hist[s] || 0) + 1; });
+  const best = pop[order[0][1]];
+  return `<div style="display:grid;grid-template-columns:${cols > 8 ? 118 : 108}px 1fr;gap:8px;align-items:start">${popGrid(cells, cols)}
+      <div class="small sec">ciemniej = mniejszy błąd<div style="margin-top:6px">rozmiary:</div>${Object.entries(hist).map(([s, n]) => `<div>${s} węzł. × ${n}</div>`).join("")}</div></div>
+    <div class="small" style="margin-top:6px">najlepszy na start (MSE ${fmtLoss(best[1])}):</div>${F(best[0])}`;
+};
+
+R.hall0 = () => hallTable(run.initial_hall.map(([e, l]) => ({ c: size(parse(e)), e, l })), 6);
+function hallTable(rows, limit) {
+  return `<table><colgroup><col style="width:42px"><col><col style="width:58px"></colgroup>
+    <tr><th>rozm.</th><th>najlepszy wzór</th><th class="r">MSE</th></tr>` +
+    rows.slice(0, limit).map((r) => `<tr${r.mark ? ' class="win"' : ""}><td>${r.c}</td><td>${Fi(r.e)}</td><td class="r">${fmtLoss(r.l)}</td></tr>`).join("") +
+    `</table>${rows.length > limit ? `<div class="small muted">… i ${rows.length - limit} więcej</div>` : ""}`;
+}
+
+R.tournament = (ctx) => {
+  const o = O(), n = o.tournament_size, p = o.tournament_win_probability;
+  if (!ctx.ev) {
+    const rows = Array.from({ length: n }, (_, k) => `<tr><td>${k + 1}.</td><td class="muted">${k === 0 ? "najlepszy z losowych" : k === n - 1 ? "najsłabszy" : ""}</td><td class="r">${pct(tournamentChance(k, n, p))}</td></tr>`).join("");
+    return `<div class="small sec">${n} losowych wzorów, posortowanych od najmniejszego błędu; szansa wygranej:</div>
+      <table><colgroup><col style="width:24px"><col><col style="width:50px"></colgroup>${rows}</table>`;
+  }
+  const t = ctx.ev.t1;
+  const rows = t.c.map(([e, l], k) => `<tr${k === t.w ? ' class="win"' : ""}><td>${k + 1}.</td><td>${Fi(e)}</td><td class="r">${fmtLoss(l)}</td><td class="r">${pct(tournamentChance(k, n, p))}</td></tr>`).join("");
+  let html = `<table><colgroup><col style="width:20px"><col><col style="width:48px"><col style="width:46px"></colgroup>
+    <tr><th>#</th><th>uczestnik</th><th class="r">MSE</th><th class="r">szansa</th></tr>${rows}</table>`;
+  if (ctx.ev.t2) {
+    const t2 = ctx.ev.t2;
+    html += `<div class="small" style="margin-top:3px">2. turniej (krzyżowanie) → wygrał ${t2.w + 1}.:</div>${F(t2.c[t2.w][0])}`;
+  } else {
+    html += `<div class="small sec" style="margin-top:3px">wygrał ${t.w + 1}. → zostaje rodzicem</div>`;
+  }
+  return html;
+};
+
+R.variation = (ctx) => {
+  const ev = ctx.ev, o = O();
+  const cx = o.crossover_probability;
+  const isCross = ev && ev.t2;
+  const split = `<div class="split"><div class="${ev && !isCross ? "on" : ""}" style="flex:3">mutacja ${pct(1 - cx)}</div>` +
+    `<div class="${isCross ? "on" : ""}" style="flex:2">krzyżowanie ${pct(cx)}</div></div>`;
+  if (!ev) {
+    const w = o.mutation_weights || [2, 2, 2, 1, 3, 2], total = w.reduce((a, b) => a + b, 0);
+    return split + chips(w.map((v) => v / total), null) +
+      `<div class="small sec" style="margin-top:6px">Rodzic → nowy wzór. Szanse mutacji liczymy tylko spośród tych, które pasują do danego wzoru (np. „przesuń liczbę” wymaga liczby we wzorze).</div>`;
+  }
+  let middle;
+  if (isCross) {
+    middle = `<div class="small sec">W kopii rodzica 1 losowe poddrzewo zastępujemy losowym poddrzewem rodzica 2:</div>
+      <div class="small" style="margin-top:2px">rodzic 2:</div>${F(ev.second)}`;
+  } else {
+    const p = ev.p && ev.p.length ? ev.p : null;
+    const chosen = ev.op;
+    middle = chips(p || MUTATIONS.map(() => 0), chosen);
+  }
+  const parent = parse(ev.parent), child = parse(ev.proposal[0]);
+  if (ev.op !== "parent_copy") markDiff(parent, child, ev.op);
+  const trees = `<div class="trees"><div class="mini"><div class="lbl">rodzic${isCross ? " 1" : ""}</div><svg id="t-parent"></svg></div>
+    <div class="arrow">→</div><div class="mini"><div class="lbl">${ev.op === "parent_copy" ? "kopia rodzica" : "nowy wzór"}</div><svg id="t-child"></svg></div></div>`;
+  ctx.after.push(() => { drawTree($("t-parent"), parent, true); drawTree($("t-child"), child, true); });
+  return split + middle + trees;
+};
+
+// Mutation kinds as tiles; the fill shows the probability, the chosen one is outlined.
+function chips(probabilities, chosen) {
+  return `<div class="chips">${MUTATIONS.map(([key, name], k) => {
+    const v = probabilities[k], on = key === chosen;
+    return `<div class="chip${on ? " on" : v === 0 ? " off" : ""}" title="${MUTATIONS[k][2]}"><i style="width:${v * 100}%"></i><span>${name}</span><span>${v === 0 ? "—" : pct(v)}</span></div>`;
+  }).join("")}</div>`;
+}
+
+R.limits = (ctx) => {
+  const o = O();
+  if (!ctx.ev) {
+    return `<div class="check"><span>•</span><span>rozmiar ≤ ${o.max_size}</span><span>•</span><span>głębokość ≤ ${o.max_depth}</span><span>•</span><span>tylko dozwolone symbole</span></div>
+      <div class="small sec" style="margin-top:8px">Zły wzór nie jest naprawiany: losujemy zmianę od nowa, najwyżej ${o.max_attempts ?? 10} razy. Gdy wszystkie próby są złe, zostaje kopia rodzica.</div>`;
+  }
+  const ev = ctx.ev, tree = parse(ev.proposal[0]);
+  const s = size(tree), d = depth(tree), copy = ev.op === "parent_copy";
+  const ok = (b) => (b ? '<span class="good">✔</span>' : '<span class="bad">✘</span>');
+  const tries = Math.min(ev.inadmissible, 40);
+  const boxes = Array.from({ length: tries }, () => '<i class="rej"></i>').join("") + (copy ? "" : '<i class="acc"></i>');
+  return `<div class="check">${ok(true)}<span>rozmiar ${s} ≤ ${o.max_size}</span>${ok(true)}<span>głęb. ${d} ≤ ${o.max_depth}</span>${ok(true)}<span>symbole</span></div>
+    <div class="small" style="margin-top:8px">propozycje:</div><div class="tries">${boxes}</div>
+    <div class="small sec">${copy ? `wszystkie odrzucone → <b>kopia rodzica</b>` : ev.inadmissible === 0 ? "przeszła od razu" : `${ev.inadmissible} ${plural(ev.inadmissible, "odrzucona", "odrzucone", "odrzuconych")}, potem <b>przeszła</b>`}</div>`;
+};
+
+R.evaluation = (ctx) => {
+  if (!ctx.ev) return `<div class="small sec">Liczymy wartości wzoru dla ${num(sizes()[0])} wierszy treningowych i średni kwadrat błędu (MSE). 0 = idealnie.</div><div class="small muted" style="margin-top:8px">Dzielenie przez 0 lub nieskończoność → błąd ∞.</div>`;
+  const ev = ctx.ev, l = ev.proposal[1], pl_ = ev.parent_loss;
+  if (!finite(l)) return `<div class="big bad">∞</div><div class="small sec">niedozwolone działanie (np. dzielenie przez 0): wzór przegra każdy turniej</div>`;
+  const better = l < pl_;
+  return `<div class="big">${fmtLoss(l)}</div>
+    <div class="small">rodzic: ${fmtLoss(pl_)} <b class="${better ? "good" : "bad"}">${better ? "▼ lepiej" : l === pl_ ? "= tak samo" : "▲ gorzej"}</b></div>
+    <div style="margin-top:4px">${fitPlot(ev.proposal[0], 143, 80)}</div>
+    <div class="muted" style="font-size:10.5px">pomiar (poziomo) a wzór (pionowo)</div>`;
+};
+
+R.constants = (ctx) => {
+  const prob = O().optimize_probability ?? 0.05;
+  if (!ctx.ev) return `<div class="small sec">Dla ${pct(prob)} potomków poprawiamy same liczby we wzorze, bez zmiany kształtu (przeszukiwanie współrzędnych, ≤ 60 obliczeń błędu).</div>`;
+  const ev = ctx.ev, hasConst = /\d/.test(ev.proposal[0].replace(/[A-Za-z_]+\d+/g, ""));
+  if (!ev.optimized) {
+    return `<div>los ${pct(prob)}: <span class="pill no">nie</span></div><div class="small sec" style="margin-top:6px">${hasConst ? "Tym razem bez dostrajania: wzór idzie dalej bez zmian." : "We wzorze nie ma liczb, więc i tak nie byłoby czego dostrajać."}</div>`;
+  }
+  const better = ev.child_loss < ev.proposal[1];
+  return `<div>los ${pct(prob)}: <span class="pill yes">tak</span></div>
+    <div class="small" style="margin-top:4px">przed (MSE ${fmtLoss(ev.proposal[1])}):</div>${F(ev.proposal[0])}
+    <div class="small" style="margin-top:2px">po (MSE <b class="${better ? "good" : ""}">${fmtLoss(ev.child_loss)}</b>):</div>${F(ev.child)}`;
+};
+
+R.hall = (ctx) => {
+  if (!ctx.ev) return `<div class="small sec">Dla każdego rozmiaru wzoru pamiętamy najlepszy, jaki widzieliśmy. Nowy wzór wchodzi, jeśli jest lepszy od rekordu swojego rozmiaru.</div>`;
+  const ev = ctx.ev, c = size(parse(ev.child)), before = ev.hall_before;
+  return `<div>rozmiar <b>${c}</b></div>
+    <div class="small" style="margin-top:3px">dotychczasowy rekord:</div>${before ? F(before[0]) + `<div class="small">MSE ${fmtLoss(before[1])}</div>` : '<div class="small muted">brak (pierwszy taki rozmiar)</div>'}
+    <div class="small" style="margin-top:3px">nowy wzór: MSE ${fmtLoss(ev.child_loss)}</div>
+    <div style="margin-top:5px">${ev.hall_updated ? '<span class="pill ok">✔ nowy rekord rozmiaru</span>' : '<span class="pill no">✘ bez zmian</span>'}</div>`;
+};
+
+R.replace = (ctx) => {
+  const n = N(), cols = Math.ceil(Math.sqrt(n));
+  const pos = ctx.ev ? ctx.ev.replaced : -1;
+  const cells = Array.from({ length: n }, (_, i) => `<i class="${i === pos ? "now" : i < pos ? "fresh" : ""}"></i>`);
+  const grid = `<div style="width:${cols > 8 ? 118 : 104}px">${popGrid(cells, cols)}</div>`;
+  if (!ctx.ev) return grid + `<div class="small sec" style="margin-top:5px">Nowy wzór zajmuje miejsce najstarszego: 0, 1, 2, … po kolei.</div>`;
+  const r = ctx.ev.removed;
+  return grid + `<div class="small" style="margin-top:4px">miejsce nr <b>${pos}</b>, wypada (MSE ${fmtLoss(r[1])}):</div>${F(r[0])}`;
+};
+
+R.iteration = (ctx) => {
+  const o = O();
+  if (!ctx.snap) {
+    return `<div class="strip"><div class="small sec">Co ${num(N())} cykli (jedna iteracja) dostrajamy liczby we wszystkich wzorach z hall of fame.</div>
+      <div class="small sec">Potem sprawdzamy warunek stopu: ${num(o.iterations)} iteracji (albo limit czasu lub docelowy błąd).</div><div></div></div>`;
+  }
+  const s = ctx.snap, c = s.counts || {};
+  const mut = MUTATIONS.reduce((a, [k]) => a + (c[k] || 0), 0);
+  const made = s.offspring - ctx.prevSnap.offspring;
+  const significant = (s.refined || []).filter((r) => !(finite(r.before) && finite(r.after)) || (r.before - r.after) > 1e-6 * Math.abs(r.before));
+  const refined = significant.length
+    ? significant.slice(0, 2).map((r) => `<div class="small">rozmiar ${r.c}: ${fmtLoss(r.before)} → <b class="good">${fmtLoss(r.after)}</b></div>`).join("") + (significant.length > 2 ? `<div class="small muted">… i ${significant.length - 2} więcej</div>` : "")
+    : `<div class="small muted">bez wyraźnej poprawy</div>`;
+  const last = s === run.snapshots.at(-1);
+  const stop = last ? { iterations: "limit iteracji", target_loss: "osiągnięty docelowy błąd", time_limit: "limit czasu" }[run.result.stop_reason] || run.result.stop_reason : null;
+  return `<div class="strip">
+    <div><b>Iteracja ${num(s.iterations)} z ${num(o.iterations)}</b> <span class="small sec">· ${num(made)} nowych wzorów</span><div class="small sec">${num(mut)} mutacji · ${num(c.crossover || 0)} krzyżowań · ${num(c.optimized || 0)} dostrojonych · ${num(c.hall_updated || 0)} rekordów rozmiaru</div></div>
+    <div><div class="small"><b>Dostrojenie liczb w hall of fame:</b></div>${refined}</div>
+    <div><div class="small"><b>Stop?</b></div>${last ? `<div class="small"><span class="pill yes" style="background:var(--blue);border-color:var(--blue)">tak</span> ${esc(stop)}</div>` : `<div class="small">${num(s.iterations)} &lt; ${num(o.iterations)} → <b>następna iteracja</b></div>`}</div></div>`;
+};
+
+R.front = (ctx) => {
+  if (!ctx.reached("front")) return `<div class="small sec">Z hall of fame bierzemy wzory od najprostszego; każdy następny musi być dokładniejszy. Teraz liczymy też błąd na walidacji.</div>`;
+  const sel = selection(), showSel = ctx.reached("selection");
+  return `<table style="font-size:12px"><colgroup><col style="width:34px"><col><col style="width:66px"><col style="width:66px"></colgroup>
+    <tr><th>rozm.</th><th>wzór</th><th class="r">trening</th><th class="r">walid.</th></tr>` +
+    run.result.front.map((c, i) => `<tr${showSel && i === sel.chosen ? ' class="sel"' : ""}><td>${c.c}</td><td>${Fi(c.expr)}</td><td class="r">${fmtLoss(c.loss)}</td><td class="r">${finite(c.val) ? fmtLoss(c.val) : "—"}</td></tr>`).join("") + "</table>";
+};
+R.selection = (ctx) => {
+  if (!ctx.reached("selection")) return `<div class="small sec">Najprostszy wzór, który na walidacji jest prawie tak dobry jak najlepszy (próg: +5%).</div>`;
+  const s = selection(), front = run.result.front;
+  const which = s.useVal ? "walid." : "trening";
+  return `<div class="kv"><span class="k">min. błąd ${which}</span><span>${fmtLoss(s.minimum)}</span>
+    <span class="k">× ${pl(String(1 + s.tol))}</span><span>${fmtLoss(s.minimum * (1 + s.tol))}</span>
+    <span class="k">10⁻¹² × najprostszy</span><span>${fmtLoss(s.floor)}</span>
+    <span class="k">próg = większa</span><span><b>${fmtLoss(s.threshold)}</b></span></div>
+    <div class="small" style="margin-top:4px">pierwszy wzór pod progiem (rozmiar ${front[s.chosen].c}):</div>${F(front[s.chosen].expr)}`;
+};
+R.testeval = (ctx) => {
+  if (!ctx.reached("testeval")) return `<div class="small sec">Wybrany wzór liczymy raz na danych, których nic wcześniej nie widziało.</div>`;
+  const t = run.result.test_loss;
+  return `<div class="big">${finite(t) ? fmtLoss(t) : "—"}</div><div class="small sec">MSE na ${sizes()[2] ? num(sizes()[2]) : "?"} wierszach testowych</div>`;
+};
+R.result = (ctx) => {
+  if (!ctx.reached("result")) return `<div class="small sec">Gotowy wzór i pliki wyników: hall_of_fame.csv, progress.csv, result.json.</div>`;
+  return `${F(run.result.equation, "f wrap")}<div class="small sec" style="margin-top:3px">prawdziwe prawo: <b>${esc(run.truth || "?")}</b></div>
+    <div class="small muted">zapis: hall_of_fame.csv · progress.csv · result.json</div>`;
+};
+
+// ================================================================== narration
+function narrate(st) {
+  const o = O(), ev = st.ev;
+  const n = sizes();
+  switch (st.node) {
+    case "data": return ["Pomiary", `Program dostaje tabelę liczb: ${run.features.map((f) => `<i>${esc(f)}</i>`).join(", ")} → <i>${esc(run.target)}</i>. Losujemy trzy osobne zbiory: <b>trening</b> (${num(n[0])} wierszy) do oceny wzorów w pętli, <b>walidację</b> (${n[1] ? num(n[1]) : "—"}) do wyboru wzoru na końcu i <b>test</b> (${n[2] ? num(n[2]) : "—"}) do jednej, uczciwej oceny. Prawdziwego prawa program nie zna.`];
+    case "settings": return ["Ustawienia: z czego wolno budować wzory", `Ustalamy alfabet: działania ${[...o.binary.map((b) => OP_SYMBOL[b] || b), ...o.unary].join(", ")}, zmienne i losowe liczby. Do tego limity (rozmiar ≤ ${o.max_size}, głębokość ≤ ${o.max_depth}) i budżet: ${num(o.iterations)} iteracji po ${num(o.population_size)} cykli, czyli ${num(o.iterations * o.population_size)} nowych wzorów. Ziarno ${o.seed} sprawia, że przebieg da się powtórzyć.`];
+    case "population": {
+      const best = [...run.initial_population].sort((a, b) => lossOf(a) - lossOf(b))[0];
+      return ["Pierwszy zestaw wzorów: losowanie na ślepo", `Dla każdego z ${num(N())} wzorów losujemy rozmiar 1–${o.initial_max_size ?? 7} i budujemy drzewo od góry: gdy jest miejsce, wstawiamy losowe działanie, a gdy nie ma, liść: zmienną (50%) albo liczbę z N(0, 1) (50%). Program nie patrzy przy tym na dane. Każdy wzór od razu dostaje błąd MSE na treningu. Najlepszy na start: ${Fi(best[0])}.`];
+    }
+    case "hall0": return ["Hall of fame: pamięć najlepszych", `Dla każdego rozmiaru zapisujemy najlepszy wzór, jaki widzieliśmy (teraz ${run.initial_hall.length} ${plural(run.initial_hall.length, "wpis", "wpisy", "wpisów")}). Dzięki temu żaden dobry wzór nie przepadnie, nawet gdy zniknie z populacji. Teraz zaczyna się pętla ewolucji.`];
+    case "tournament": {
+      const t = ev.t1, p = tournamentChance(t.w, o.tournament_size, o.tournament_win_probability);
+      return [`Turniej: wybór rodzica`, `Losujemy ${o.tournament_size} różnych wzorów z populacji i sortujemy je od najmniejszego błędu. Najlepszy wygrywa z szansą ${pct(o.tournament_win_probability)}, a jeśli nie, szansę dostaje następny. Tym razem wygrał <b>${t.w + 1}.</b> (szansa ${pct(p)}): ${Fi(t.c[t.w][0])}.` +
+        (ev.t2 ? ` Wylosowało się krzyżowanie, więc drugi turniej wybrał drugiego rodzica: ${Fi(ev.t2.c[ev.t2.w][0])}.` : "")];
+    }
+    case "variation": {
+      if (ev.op === "parent_copy") return ["Zmiana nie wyszła", `Żadna z ${o.max_attempts ?? 10} prób nie zmieściła się w limitach, więc potomkiem zostaje kopia rodzica.`];
+      if (ev.t2) return [`Krzyżowanie (szansa ${pct(o.crossover_probability)})`, `W kopii pierwszego rodzica losowy fragment zastępujemy losowym fragmentem drugiego rodzica. Powstaje ${Fi(ev.proposal[0])}. ` +
+        (ev.proposal[0] === ev.parent ? `Tym razem wymienione fragmenty były takie same, więc nowy wzór jest identyczny z rodzicem; to też się zdarza.` : `Pomarańczowa ramka pokazuje wymieniony fragment.`)];
+      const k = MUTATIONS.findIndex(([key]) => key === ev.op), m = MUTATIONS[k];
+      const p = ev.p && ev.p.length ? ev.p[k] : 0;
+      const off = ev.p ? ev.p.filter((v) => v === 0).length : 0;
+      return [`Mutacja: ${m[1]}`, `Z szansą ${pct(1 - o.crossover_probability)} robimy mutację. Wylosowano <b>${m[1]}</b> (${pct(p)} wśród mutacji pasujących do tego wzoru): ${m[2]}. ${Fi(ev.parent)} → ${Fi(ev.proposal[0])}.` + (off ? ` Przekreślone mutacje nie pasują do tego wzoru.` : "")];
+    }
+    case "limits": {
+      if (ev.op === "parent_copy") return ["Limity", `Wszystkie propozycje przekroczyły limity, więc zostaje kopia rodzica.`];
+      const t = parse(ev.proposal[0]);
+      return ["Limity", `Rozmiar ${size(t)} ≤ ${o.max_size}, głębokość ${depth(t)} ≤ ${o.max_depth}, same dozwolone symbole: wzór jest dopuszczalny. ` +
+        (ev.inadmissible ? `Wcześniej ${ev.inadmissible} ${plural(ev.inadmissible, "propozycja przekroczyła", "propozycje przekroczyły", "propozycji przekroczyło")} limity i zmianę losowano od nowa.` : `Przeszedł za pierwszym razem.`)];
+    }
+    case "evaluation": {
+      const l = ev.proposal[1];
+      if (!finite(l)) return ["Ocena: błąd ∞", `Wzór wykonuje niedozwolone działanie (np. dzielenie przez zero), więc dostaje błąd ∞. Przegra każdy turniej i nie wejdzie do hall of fame.`];
+      return ["Ocena na danych treningowych", `Liczymy wzór dla ${num(n[0])} wierszy treningowych: MSE = <b>${fmtLoss(l)}</b> (rodzic: ${fmtLoss(ev.parent_loss)}). ` +
+        (l < ev.parent_loss ? "Nowy wzór jest lepszy od rodzica." : "Jest gorszy od rodzica. To normalne: większość losowych zmian psuje wzór, a postęp robią rzadkie trafienia.") + ` Na wykresie punkty na przekątnej oznaczają idealne przewidywanie.`];
+    }
+    case "constants":
+      if (!ev.optimized) return ["Dostrojenie liczb: nie tym razem", `Liczby poprawiamy tylko u ${pct(o.optimize_probability ?? 0.05)} potomków, bo to kosztowne (do 60 obliczeń błędu). Tym razem się nie wylosowało.`];
+      return ["Dostrojenie liczb", `Wylosowało się dostrajanie: kształt wzoru zostaje, a liczby poprawiamy metodą przeszukiwania współrzędnych z krokiem parabolicznym. Błąd: ${fmtLoss(ev.proposal[1])} → <b>${fmtLoss(ev.child_loss)}</b>.`];
+    case "hall": {
+      const c = size(parse(ev.child)), b = ev.hall_before;
+      if (!finite(ev.child_loss)) return ["Hall of fame", `Wzór z błędem ∞ nie wchodzi do hall of fame.`];
+      if (ev.hall_updated) return ["Hall of fame: nowy rekord", b ? `Nowy wzór ma rozmiar ${c}. Dotychczasowy rekord tego rozmiaru miał błąd ${fmtLoss(b[1])}, a nowy ${fmtLoss(ev.child_loss)}, więc zajmuje jego miejsce.` : `To pierwszy wzór o rozmiarze ${c}, więc trafia do hall of fame.`];
+      return ["Hall of fame: bez zmian", `Rekord rozmiaru ${c} ma błąd ${fmtLoss(b[1])}, a nowy wzór ${fmtLoss(ev.child_loss)}, więc hall of fame się nie zmienia.`];
+    }
+    case "replace":
+      return ["Wymiana najstarszego wzoru", `Nowy wzór zajmuje miejsce nr ${ev.replaced}, czyli najstarszego wzoru w populacji (${Fi(ev.removed[0])}). Miejsca wymieniamy po kolei 0, 1, 2, …, więc każdy wzór żyje dokładnie ${num(N())} cykli, nawet najlepszy (ale ten zostaje w hall of fame). Potem następny cykl.`];
+    case "iteration": {
+      const s = st.snap, last = s === run.snapshots.at(-1);
+      return [`Koniec iteracji ${num(s.iterations)} z ${num(o.iterations)}`, `Za nami ${num(s.offspring)} cykli. Na koniec każdej iteracji dostrajamy liczby we wszystkich wzorach z hall of fame, które się zmieniły. ` +
+        (last ? `Warunek stopu spełniony, więc kończymy ewolucję i przechodzimy do wyboru wyniku.` : `Limit nie jest osiągnięty, więc wracamy na początek pętli.`) +
+        (st.prevSnap.offspring > 0 && !steps.some((x) => x.ev && x.ev.cycle >= st.prevSnap.offspring && x.ev.cycle < s.offspring) ? ` (Cykli z tej iteracji nie pokazujemy pojedynczo: nie było w nich nowego rekordu.)` : "")];
+    }
+    case "front": return ["Front Pareta", `Z hall of fame bierzemy wzory od najprostszego, przy czym każdy następny musi być dokładniejszy. Teraz po raz pierwszy liczymy błąd na <b>walidacji</b> (${n[1] ? num(n[1]) : "—"} wierszy), których ewolucja nigdy nie widziała.`];
+    case "selection": {
+      const s = selection();
+      return ["Wybór jednego wzoru", `Bierzemy najprostszy wzór, którego błąd walidacyjny nie przekracza progu max(1,05 × najmniejszy, 10⁻¹² × błąd najprostszego) = <b>${fmtLoss(s.threshold)}</b>. Druga część progu traktuje różnice na poziomie zaokrągleń jako remis. Wybrany: ${Fi(run.result.front[s.chosen].expr)}.`];
+    }
+    case "testeval": return ["Uczciwa ocena na teście", `Wybrany wzór liczymy raz na zbiorze testowym: MSE = <b>${finite(run.result.test_loss) ? fmtLoss(run.result.test_loss) : "—"}</b>. Ani ewolucja, ani wybór tych danych nie widziały, więc to jest uczciwy wynik.`];
+    case "result": return ["Gotowy wzór", `Program zwraca ${Fi(run.result.equation)}. Dopiero teraz odsłaniamy prawdziwe prawo: <b>${esc(run.truth || "?")}</b>. Wyniki trafiają do plików hall_of_fame.csv, progress.csv i result.json.`];
+  }
+  return ["", ""];
+}
+
+// ================================================================== rendering
+const PHASE_OF = (node) => (PREP.includes(node) ? "prep" : END.includes(node) ? "end" : "loop");
+const ORDER = [...PREP, ...CYCLE, "iteration", ...END];
+function render() {
+  const st = steps[cur];
+  const phase = PHASE_OF(st.node);
+  const activeIndex = ORDER.indexOf(st.node);
+  const ctx = {
+    node: st.node, phase, after: [],
+    reached: (node) => phase === "end" && END.indexOf(st.node) >= END.indexOf(node),
+  };
+  const cycleIdx = CYCLE.indexOf(st.node);
+  for (const id of Object.keys(CARDS)) {
+    const node = DATA_CARDS.includes(id) ? "data" : id;
+    const card = $(`c-${id}`);
+    let state;
+    if (DATA_CARDS.includes(id)) {
+      const lit = st.node === "data" || (id === "val" && st.node === "selection") || (id === "test" && st.node === "testeval") || (id === "truth" && st.node === "result") || (id === "train" && (st.node === "population" || st.node === "evaluation"));
+      state = lit ? "active" : "done";
+    } else if (PREP.includes(node)) {
+      state = node === st.node ? "active" : phase === "prep" && ORDER.indexOf(node) > activeIndex ? "pending" : "done";
+    } else if (CYCLE.includes(node)) {
+      const k = CYCLE.indexOf(node);
+      state = phase !== "loop" || cycleIdx < 0 ? "pending" : k === cycleIdx ? "active" : k < cycleIdx ? "done" : "pending";
+    } else if (node === "iteration") {
+      state = st.node === "iteration" ? "active" : "pending";
+    } else {
+      state = st.node === node ? "active" : phase === "end" && END.indexOf(node) < END.indexOf(st.node) ? "done" : "pending";
+    }
+    card.classList.toggle("active", state === "active");
+    card.classList.toggle("pending", state === "pending");
+    const cardCtx = { ...ctx, ev: CYCLE.includes(node) && cycleIdx >= 0 && CYCLE.indexOf(node) <= cycleIdx ? st.ev : null,
+      snap: node === "iteration" && st.node === "iteration" ? st.snap : null, prevSnap: st.prevSnap };
+    $(`b-${id}`).innerHTML = R[id](cardCtx);
+  }
+  ctx.after.forEach((f) => f());
+  // Groups and wires.
+  $("g-data").classList.toggle("lit", st.node === "data");
+  $("g-start").classList.toggle("lit", phase === "prep" && st.node !== "data");
+  $("g-loop").classList.toggle("lit", phase === "loop");
+  $("g-end").classList.toggle("lit", phase === "end");
+  const lit = new Set(incoming(cur));
+  for (const id of Object.keys(WIRES)) {
+    const g = $(`w-${id}`), on = lit.has(id);
+    const blue = (WIRES[id].kind || "").includes("blue");
+    g.querySelector("path").classList.toggle("lit", on);
+    g.querySelector("path").setAttribute("marker-end", on ? (blue ? "url(#arrow-blue)" : "url(#arrow-lit)") : "url(#arrow)");
+    const label = g.querySelector("text");
+    if (label) label.classList.toggle("lit", on);
+  }
+  // Loop counters.
+  const o = O(), total = o.iterations * o.population_size;
+  let it = 0, cycle = 0;
+  if (st.ev) { it = st.ev.iteration + 1; cycle = st.ev.cycle + 1; }
+  else if (st.snap) { it = st.snap.iterations; cycle = st.snap.offspring; }
+  else if (phase === "end") { it = run.snapshots.at(-1).iterations; cycle = run.snapshots.at(-1).offspring; }
+  $("lc-iter").innerHTML = `iteracja <b>${num(it)}</b> z ${num(o.iterations)}`;
+  $("lc-cycle").innerHTML = st.ev ? `cykl <b>${num(cycle)}</b> z ${num(total)}` : `cykle: <b>${num(cycle)}</b> z ${num(total)}`;
+  $("lc-best").innerHTML = `najlepszy MSE: <b>${fmtLoss(bestAt[cur])}</b>`;
+  $("loop-progress").firstElementChild.style.width = `${(100 * cycle) / total}%`;
+  // Narration and controls.
+  const [title, text] = narrate(st);
+  const num_ = CARDS[DATA_CARDS.includes(st.node) || st.node === "data" ? "train" : st.node].num;
+  $("nar-where").textContent = `krok ${num_} · ${GROUPS[phase === "prep" ? (st.node === "data" ? "data" : "start") : phase === "loop" ? "loop" : "end"].label}` + (st.ev && st.ev.new_best && st.node === "tournament" ? " · ★ ten cykl da nowy rekord" : "");
+  $("nar-title").textContent = title;
+  $("nar-text").innerHTML = text;
+  $("slider").value = cur;
+  $("step-label").textContent = `${num(cur + 1)} / ${num(steps.length)}`;
+  $("prev").disabled = cur === 0;
+  $("next").disabled = cur === steps.length - 1;
+  history.replaceState(null, "", `#run=${encodeURIComponent(run.id)}&step=${cur}`);
+}
+// Wires that lead into the current step.
+function incoming(i) {
+  const st = steps[i], prev = steps[i - 1];
+  switch (st.node) {
+    case "population": return ["setpop", "train"];
+    case "hall0": return ["pophall"];
+    case "tournament": return !prev || prev.node === "hall0" ? ["start"] : prev.node === "iteration" ? ["iterloop"] : ["rt"];
+    case "variation": return ["tv"];
+    case "limits": return st.ev.inadmissible ? ["vl", "retry"] : ["vl"];
+    case "evaluation": return ["le"];
+    case "constants": return ["ec"];
+    case "hall": return ["ch"];
+    case "replace": return ["hr"];
+    case "iteration": return prev && prev.node === "replace" ? ["rit"] : [];
+    case "front": return ["exit"];
+    case "selection": return ["fs", "valwire"];
+    case "testeval": return ["st", "testwire"];
+    case "result": return ["tr"];
+  }
+  return [];
+}
+
+// ================================================================== navigation
+function go(i) { cur = Math.max(0, Math.min(steps.length - 1, i)); render(); }
+function find(pred) { for (let j = cur + 1; j < steps.length; j++) if (pred(steps[j])) return j; return steps.length - 1; }
+const jumps = {
+  cycle: () => go(find((s) => s.node === "tournament" || s.node === "iteration" || s.node === "front")),
+  record: () => go(find((s) => (s.node === "tournament" && s.ev.new_best) || s.node === "front")),
+  iter: () => go(find((s) => s.node === "iteration" || s.node === "front")),
+  end: () => go(steps.findIndex((s) => s.node === "front")),
+};
+function stopPlay() { clearInterval(timer); timer = null; $("play").textContent = "▶ Odtwarzaj"; }
+function togglePlay() {
+  if (timer) return stopPlay();
+  $("play").textContent = "⏸ Pauza";
+  timer = setInterval(() => { if (cur >= steps.length - 1) stopPlay(); else go(cur + 1); }, Number($("speed").value));
+}
+
+function loadRun(id, step = 0) {
+  stopPlay();
+  run = TRACES.find((t) => t.id === id) || TRACES[0];
+  $("run").value = run.id;
+  buildSteps();
+  WIRES.rit.label.text = `co ${num(N())} cykli`;
+  buildBoard();
+  $("slider").max = steps.length - 1;
+  go(step);
+}
+
+function fit() {
+  const s = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
+  const stage = $("stage");
+  stage.style.transform = `scale(${s})`;
+  stage.style.left = `${Math.max(0, (window.innerWidth - 1600 * s) / 2)}px`;
+  stage.style.top = `${Math.max(0, (window.innerHeight - 900 * s) / 2)}px`;
+}
+
+function init() {
+  if (!TRACES.length) { document.body.innerHTML = "<p style='padding:20px'>Brak danych: uruchom presentation/make_traces.sh.</p>"; return; }
+  for (const t of TRACES) $("run").add(new Option(t.label, t.id));
+  $("run").addEventListener("change", (e) => loadRun(e.target.value));
+  $("prev").addEventListener("click", () => { stopPlay(); go(cur - 1); });
+  $("next").addEventListener("click", () => { stopPlay(); go(cur + 1); });
+  $("j-cycle").addEventListener("click", () => { stopPlay(); jumps.cycle(); });
+  $("j-record").addEventListener("click", () => { stopPlay(); jumps.record(); });
+  $("j-iter").addEventListener("click", () => { stopPlay(); jumps.iter(); });
+  $("j-end").addEventListener("click", () => { stopPlay(); jumps.end(); });
+  $("play").addEventListener("click", togglePlay);
+  $("speed").addEventListener("change", () => { if (timer) { stopPlay(); togglePlay(); } });
+  $("slider").addEventListener("input", (e) => { stopPlay(); go(Number(e.target.value)); });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT" || e.altKey || e.ctrlKey || e.metaKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "arrowright") { stopPlay(); go(cur + 1); }
+    else if (k === "arrowleft") { stopPlay(); go(cur - 1); }
+    else if (k === " ") { togglePlay(); }
+    else if (k === "c") { stopPlay(); jumps.cycle(); }
+    else if (k === "r") { stopPlay(); jumps.record(); }
+    else if (k === "i") { stopPlay(); jumps.iter(); }
+    else if (k === "e") { stopPlay(); jumps.end(); }
+    else if (k === "home") { stopPlay(); go(0); }
+    else return;
+    e.preventDefault();
+  });
+  window.addEventListener("resize", fit);
+  // Deep links (#run=spring&step=12) also work when only the hash changes, e.g. from slides.
+  const fromHash = () => {
+    const params = new URLSearchParams(location.hash.slice(1));
+    const id = params.get("run") || TRACES[0].id, step = Number(params.get("step")) || 0;
+    if (!run || run.id !== id) loadRun(id, step); else if (step !== cur) { stopPlay(); go(step); }
+  };
+  window.addEventListener("hashchange", fromHash);
+  fit();
+  fromHash();
+}
+init();
+</script>
+</body>
+</html>

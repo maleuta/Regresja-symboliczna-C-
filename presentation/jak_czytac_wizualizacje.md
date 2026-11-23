@@ -8,12 +8,53 @@ Najlepiej czytać ten tekst z otwartą wizualizacją obok.
 Jak otworzyć: `google-chrome presentation/visualizer.html` albo dwuklik na pliku.
 Nie trzeba internetu ani kompilacji.
 
+**Najpierw obraz całości:** `presentation/pipeline.html` pokazuje cały proces jako mapę
+(rozdział 0 poniżej). `visualizer.html` wchodzi potem w szczegóły jednego cyklu i całego przebiegu.
+
 Ogólne wyjaśnienie całego projektu od zera (problem, drzewa, ewolucja, ograniczenia,
 testy, pytania prowadzącego) jest w
 [WYJASNIENIE_DLA_POCZATKUJACYCH.md](../WYJASNIENIE_DLA_POCZATKUJACYCH.md). Ten dokument
 skupia się na wizualizacji i na tym, co dokładnie dzieje się w jednym przebiegu.
 
 ---
+
+## 0. Mapa całego procesu (`pipeline.html`)
+
+Strona przedstawia drogę od pomiarów do gotowego wzoru jako schemat czytany od lewej do prawej.
+Bloki połączone są strzałkami, a na każdym kroku podświetla się jeden blok i strzałka, która do
+niego prowadzi. Pasek na dole opisuje krok słowami, na liczbach z tego konkretnego cyklu.
+
+| Obszar | Karty | Co w nich widać |
+|---|---|---|
+| **Pomiary** (lewo) | trening, walidacja, test, prawdziwe prawo | ile wierszy ma każdy zbiór i do czego służy; prawdziwe prawo jest rozmyte, bo program go nie zna, i odsłania się dopiero na końcu |
+| **Start** | 2 ustawienia, 3 losowa populacja, 4 hall of fame | dozwolone działania i limity; siatka losowych wzorów (ciemniej = mniejszy błąd); najlepszy wzór każdego rozmiaru po starcie |
+| **Pętla ewolucji** (środek) | 5 turniej, 6 mutacja lub krzyżowanie, 7 limity, 8 ocena, 9 dostrojenie liczb, 10 hall of fame, 11 wymiana najstarszego, 12 koniec iteracji | jeden cykl: kto brał udział w turnieju i kto wygrał; jaka mutacja została wylosowana i z jakim prawdopodobieństwem; rodzic i nowy wzór jako drzewa ze zmianą w ramce; czy wzór mieści się w limitach; jego błąd i wykres dopasowania; czy wylosowało się dostrojenie liczb; czy pobił rekord swojego rozmiaru; które miejsce w populacji zajął |
+| **Wynik** (prawo, niebieski) | 13 front Pareta, 14 wybór, 15 test, 16 gotowy wzór | wzory od najprostszego z błędami na treningu i walidacji; obliczenie progu wyboru; błąd na teście; wynik obok prawdziwego prawa |
+
+Jak czytać strzałki:
+- **„następny cykl”** prowadzi od wymiany z powrotem do turnieju. Jeden obrót to jeden nowy wzór.
+- **„co 64 cykle”** prowadzi do paska „Koniec iteracji”. Tam dostrajamy liczby w hall of fame
+  i sprawdzamy, czy kończymy.
+- **„następna iteracja”** wraca na początek pętli, a **„stop”** wychodzi do etapu wyniku.
+- **„poza limitem → nowa próba”** świeci się, gdy limity odrzuciły propozycję i zmianę trzeba
+  było wylosować jeszcze raz.
+- Przerywane linie walidacji i testu biegną dołem aż do wyniku: tych danych pętla nie widzi.
+
+Liczniki nad pętlą pokazują numer iteracji, numer cyklu, najlepszy błąd do tej pory i pasek postępu.
+
+Po pierwszej iteracji pokazujemy pojedynczo tylko cykle, które dały nowy najlepszy wynik
+(przycisk **★ Rekord** albo klawisz `R`). Pozostałe cykle podsumowuje pasek „Koniec iteracji”:
+ile było mutacji i krzyżowań, ile wzorów dostrojono, które wpisy hall of fame się poprawiły.
+Klawisz `C` przeskakuje do następnego cyklu, `I` do końca iteracji, `E` do wyniku, a `spacja`
+odtwarza całość. Przebieg zmienia się listą w lewym górnym rogu.
+
+Gotowe przykłady (wkleić po `pipeline.html`):
+- `#run=spring&step=4`: pierwszy cykl, od turnieju do wymiany;
+- `#run=spring&step=12`: krzyżowanie;
+- `#run=spring&step=461`: koniec 3. iteracji: dostrojenie liczb w hall of fame zmienia
+  `1,215·x + (x + 0,814)` w dokładne `1,5·x + (x + 0,75)`;
+- `#run=constrained&step=76`: limity odrzucają propozycję;
+- `#run=projectile&step=259`: wzór z dzieleniem przez zero dostaje błąd ∞.
 
 ## 1. O co w ogóle chodzi
 

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -385,22 +386,67 @@ void observer_tests() {
     const sr::Variation variation(options, train.feature_names);
     const std::set<std::string> operations{"perturb_constant", "change_operator", "replace_leaf", "replace_subtree",
                                            "insert_node", "delete_node", "crossover", "parent_copy"};
+    std::map<std::size_t, double> hall;  // complexity -> best train loss, mirrored from the events
+    std::size_t optimized = 0, hall_updates = 0;
     options.observer.on_iteration = [&](const sr::IterationSnapshot& snapshot) {
         snapshot_iterations.push_back(snapshot.iterations);
         snapshot_offspring.push_back(snapshot.offspring);
         check(snapshot.population.size() == options.population_size, "Snapshot holds the population");
         check(!snapshot.front.empty(), "Snapshot holds the Pareto front");
+        hall.clear();
+        for (std::size_t i = 0; i < snapshot.hall_of_fame.size(); ++i) {
+            const auto& entry = snapshot.hall_of_fame[i];
+            check(i == 0 || snapshot.hall_of_fame[i - 1].complexity() < entry.complexity(), "Hall ascends in complexity");
+            hall[entry.complexity()] = entry.train_loss;
+        }
+        for (const auto& member : snapshot.front) {
+            check(hall.contains(member.complexity()) && hall[member.complexity()] == member.train_loss,
+                  "Pareto front is taken from the hall of fame");
+        }
+    };
+    const auto check_draw = [&](const sr::TournamentDraw& draw, const sr::OffspringEvent& event, const sr::Candidate& selected) {
+        check(draw.contestants.size() == options.tournament_size && draw.winner < draw.contestants.size(),
+              "Tournament reports its contestants and winner");
+        check(std::set<std::size_t>(draw.contestants.begin(), draw.contestants.end()).size() == draw.contestants.size(),
+              "Contestants are distinct");
+        for (std::size_t k = 0; k < draw.contestants.size(); ++k) {
+            check(draw.contestants[k] < event.population.size(), "Contestant is a population index");
+            check(k == 0 || event.population[draw.contestants[k - 1]].train_loss <=
+                                event.population[draw.contestants[k]].train_loss,
+                  "Contestants are ranked by train loss");
+        }
+        check(&event.population[draw.contestants[draw.winner]] == &selected, "Winner is the selected parent");
     };
     options.observer.on_offspring = [&](const sr::OffspringEvent& event) {
         check(event.cycle == events++, "Events are reported in order");
         check(operations.contains(event.operation), "Known operation: " + event.operation);
         check((event.operation == "crossover") == (event.second_parent != nullptr), "Second parent only for crossover");
+        check((event.second_parent != nullptr) == (event.second_tournament != nullptr), "Second tournament for crossover");
         crossovers += event.operation == "crossover";
         check(event.replaced == event.cycle % options.population_size, "The oldest member is replaced");
         check(variation.admissible(event.child.expression), "Reported child is admissible");
+        check_draw(event.tournament, event, event.parent);
+        if (event.second_tournament) check_draw(*event.second_tournament, event, *event.second_parent);
+        if (event.optimized) {
+            ++optimized;
+            check(event.child.train_loss <= event.proposal.train_loss &&
+                      event.child.complexity() == event.proposal.complexity(),
+                  "Optimization keeps the shape and never worsens the loss");
+        } else {
+            check(&event.proposal == &event.child, "Without optimization the proposal is the child");
+        }
+        const auto entry = hall.find(event.child.complexity());
+        const bool expected = std::isfinite(event.child.train_loss) &&
+                              (entry == hall.end() || event.child.train_loss < entry->second);
+        check(event.hall_of_fame_updated == expected, "Hall-of-fame flag matches the update rule");
+        if (expected) {
+            hall[event.child.complexity()] = event.child.train_loss;
+            ++hall_updates;
+        }
     };
     const auto observed = sr::fit(train, options, functions);
     check(events == observed.statistics.offspring && crossovers > 0, "One event per offspring");
+    check(optimized > 0 && hall_updates > 0, "Run exercises constant optimization and hall-of-fame updates");
     check(snapshot_iterations == std::vector<std::size_t>{0, 1, 2, 3, 4, 5, 6}, "Snapshots after init and each iteration");
     check(snapshot_offspring.back() == observed.statistics.offspring, "Last snapshot is the final state");
     check(observed.hall_of_fame.size() == plain.hall_of_fame.size() &&

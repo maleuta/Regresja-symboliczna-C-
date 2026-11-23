@@ -531,11 +531,15 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
     // Hall of fame: best train loss for each complexity; the flag marks converged constants.
     std::map<std::size_t, std::pair<Candidate, bool>> hall;
     double best_loss = infinity;
+    // Returns true when the candidate became the hall-of-fame entry of its complexity.
     const auto record = [&](const Candidate& candidate) {
-        if (!std::isfinite(candidate.train_loss)) return;
+        if (!std::isfinite(candidate.train_loss)) return false;
         best_loss = std::min(best_loss, candidate.train_loss);
         auto [entry, inserted] = hall.try_emplace(candidate.complexity(), candidate, false);
-        if (!inserted && candidate.train_loss < entry->second.first.train_loss) entry->second = {candidate, false};
+        if (inserted) return true;
+        if (candidate.train_loss >= entry->second.first.train_loss) return false;
+        entry->second = {candidate, false};
+        return true;
     };
     const auto target_reached = [&] { return options.target_loss && best_loss <= *options.target_loss; };
     const auto out_of_time = [&] { return options.time_limit_seconds && elapsed() >= *options.time_limit_seconds; };
@@ -549,7 +553,8 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
     }
 
     std::vector<std::size_t> order(population.size());
-    const auto tournament = [&]() -> const Candidate& {
+    // Fills `draw` (reported to observers) and returns the selected member.
+    const auto tournament = [&](TournamentDraw& draw) -> const Candidate& {
         // Distinct contestants by a partial Fisher-Yates shuffle, then rank by train loss.
         std::iota(order.begin(), order.end(), std::size_t{0});
         for (std::size_t k = 0; k < options.tournament_size; ++k) {
@@ -559,18 +564,27 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
         std::stable_sort(order.begin(), end, [&](std::size_t a, std::size_t b) {
             return population[a].train_loss < population[b].train_loss;
         });
+        draw.contestants.assign(order.begin(), end);
+        draw.winner = options.tournament_size - 1;
         for (std::size_t k = 0; k + 1 < options.tournament_size; ++k) {
-            if (chance(random, options.tournament_win_probability)) return population[order[k]];
+            if (chance(random, options.tournament_win_probability)) {
+                draw.winner = k;
+                break;
+            }
         }
-        return population[order[options.tournament_size - 1]];
+        return population[draw.contestants[draw.winner]];
     };
+    TournamentDraw first_draw, second_draw;
 
     const auto& observer = options.observer;
     std::optional<std::size_t> last_snapshot;  // offspring count of the previous snapshot
     const auto snapshot = [&] {
         if (observer.on_iteration && last_snapshot != statistics.offspring) {
             last_snapshot = statistics.offspring;
-            observer.on_iteration({statistics.iterations, statistics.offspring, elapsed(), population, pareto_front(hall)});
+            std::vector<Candidate> entries;
+            for (const auto& [complexity, entry] : hall) entries.push_back(entry.first);
+            observer.on_iteration(
+                {statistics.iterations, statistics.offspring, elapsed(), population, pareto_front(hall), std::move(entries)});
         }
     };
     snapshot();
@@ -588,11 +602,11 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
                 statistics.stop_reason = StopReason::time_limit;
                 break;
             }
-            const Candidate& parent = tournament();
+            const Candidate& parent = tournament(first_draw);
             const Candidate* second_parent = nullptr;
             Variation::Offspring offspring;
             if (chance(random, options.crossover_probability)) {
-                second_parent = &tournament();
+                second_parent = &tournament(second_draw);
                 offspring = variation.crossover(parent.expression, second_parent->expression, random);
             } else {
                 offspring = variation.mutate(parent.expression, random);
@@ -601,16 +615,20 @@ SearchResult run_search(const Dataset& train, const Dataset* validation, const S
             Candidate child = offspring.expression ? evaluated(std::move(*offspring.expression)) : parent;
             if (!offspring.expression) ++statistics.rejected_offspring;
             bool optimized_child = false;
+            std::optional<Candidate> proposal;  // pre-optimization child, kept only for observers
             if (chance(random, options.optimize_probability) && !child.expression.constants().empty()) {
                 optimized_child = true;
+                if (observer.on_offspring) proposal = child;
                 auto optimized = optimize_constants(child.expression, objective, options.optimization);
                 if (optimized.loss < child.train_loss) child = {std::move(optimized.expression), optimized.loss, std::nullopt};
             }
-            record(child);
+            const bool hall_updated = record(child);
             if (observer.on_offspring) {
                 observer.on_offspring({iteration, statistics.offspring,
                                        offspring.expression ? offspring.operation : std::string("parent_copy"),
-                                       parent, second_parent, child, offspring.inadmissible, optimized_child, oldest});
+                                       parent, second_parent, proposal ? *proposal : child, child,
+                                       offspring.inadmissible, optimized_child, oldest, population, first_draw,
+                                       second_parent ? &second_draw : nullptr, hall_updated});
             }
             population[oldest] = std::move(child);
             oldest = (oldest + 1) % population.size();
